@@ -40,7 +40,7 @@ if internet_connection() == False:
     exit()
 
 def login():
-    global username, password, login_data, cookies, headers
+    global username, password, login_data
     username = input("Username: ")
     password = input("Password: ")
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
@@ -55,9 +55,7 @@ def login():
         print("Login successful !")
         time.sleep(1)
         os.system('clear')
-        cookies = {"token": urllib.parse.quote_plus(r.text)}
-        access_token = "Bearer " + json.loads(r.text)['access_token']
-        headers = {"Authorization" : access_token}
+        cookies_renew(r)
 
 def login_option():
     os.system('clear')
@@ -87,7 +85,7 @@ def make_login_json():
     menu()
 
 def json_login():
-    global username, password, login_data, cookies, headers
+    global username, password, login_data
     if os.path.exists("login.json") == False:
         print("You don't have a JSON login file !")
         time.sleep(1)
@@ -108,9 +106,7 @@ def json_login():
         print("Login successful !")
         time.sleep(1)
         os.system('clear')
-        cookies = {"token": urllib.parse.quote_plus(r.text)}
-        access_token = "Bearer " + json.loads(r.text)['access_token']
-        headers = {"Authorization" : access_token}
+        cookies_renew(r)
 
 def user_info():
     global student_id, name, course_url
@@ -120,6 +116,12 @@ def user_info():
     r2 = httpx.get(semester_url, headers=headers, cookies=cookies)
     course_url = "https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/findByPeriod/" + str(student_id) + "/" + str(json.loads(r2.text)['semesterRegisterPeriods'][0]['id'])
         
+def cookies_renew(r):
+    global cookies, headers
+    cookies = {"token": urllib.parse.quote_plus(r.text)}
+    access_token = "Bearer " + json.loads(r.text)['access_token']
+    headers = {"Authorization" : access_token}
+
 def menu():
     print("Welcome back, " + name)
     print("Your id is: " + str(student_id))
