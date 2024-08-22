@@ -128,15 +128,6 @@ def cookies_renew(r):
     access_token = "Bearer " + json.loads(r.text)['access_token']
     headers = {"Authorization" : access_token}
 
-def cookies_expire_check():
-    r = httpx.post(login_url, data=login_data)
-    expire_time = json.loads(r.text)['expires_in']
-    if expire_time < 5:
-        print("Renewing cookies, please wait...")
-        time.sleep(7)
-        cookies_renew(r)
-        os.system('clear')
-
 def menu():
     print("Welcome back, " + name)
     print("Your id is: " + str(student_id))
@@ -149,15 +140,12 @@ def menu():
     option = input("\nOption: ")
     if option == '1':
         os.system('clear')
-        cookies_expire_check()
         course_register()
     elif option == '2':
         os.system('clear')
-        cookies_expire_check()
         course_list()
     elif option == '3':
         os.system('clear')
-        cookies_expire_check()
         auto_register()
     elif option == '4':
         make_login_json()
@@ -174,16 +162,34 @@ def course_list():
     course_list = json.loads(r.text)
     course_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'])
     for i in range(course_length):
-        courseSubjectDtos_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'])
         if course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'] is not None:
             subcourse_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'])
             for j in range(subcourse_length):
-                print(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['displayName'])
-                print(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['id'])
+                sub_display_name = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['displayName']
+                sub_display_id = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['id']
+                sub_start_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['startDate']
+                sub_end_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['endDate']
+                sub_start_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['startHour']['startString']
+                sub_end_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['endHour']['endString']
+                sub_week_index = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['weekIndex']
+                print(sub_display_name, '(' ,sub_display_id,')')
+                print(str(datetime.fromtimestamp(sub_start_date / 1000))[0:10], "->", str(datetime.fromtimestamp(sub_end_date / 1000))[0:10], end='')
+                print(' ||', week_index_c(sub_week_index), end='')
+                print(" ||" , sub_start_hour, "->", sub_end_hour)   
         else:
+            courseSubjectDtos_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'])
             for k in range(courseSubjectDtos_length):
-                print(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['displayName'])
-                print(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['id'])
+                display_name = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['displayName']
+                display_id = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['id']
+                start_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['startDate']
+                end_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['endDate']
+                start_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['startHour']['startString']
+                end_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['endHour']['endString']
+                week_index = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['weekIndex']
+                print(display_name, '(' ,display_id , ')')
+                print(str(datetime.fromtimestamp(start_date / 1000))[0:10], "->", str(datetime.fromtimestamp(end_date / 1000))[0:10], end='')
+                print(' ||', week_index_c(week_index), end='')
+                print(" ||", start_hour, "->", end_hour)
         print('')
     print("Press any key to continue...")
     input()
@@ -207,7 +213,6 @@ def auto_register():
     if option == 'Y' or option == 'y':
         os.system('clear')
         countdown()
-        cookies_expire_check()
     elif option == 'n' or option == 'N':
         os.system('clear')
         menu()
@@ -224,4 +229,21 @@ def countdown():
         times = f"{int(hrs):02}:{min:02}:{sec:02}"
         print("Schedule started, " + times + " remaining.", end='\r')
         time.sleep(1)
+
+def week_index_c(x):
+    if x == 1:
+        return "Sun"
+    elif x == 2:
+        return "Mon"
+    elif x == 3:
+        return "Tue"
+    elif x == 4:
+        return "Wed"
+    elif x == 5:
+        return "Thu"
+    elif x == 6:
+        return "Fri"
+    elif x == 7:
+        return "Sat"
+
 main()
