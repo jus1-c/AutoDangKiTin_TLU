@@ -23,7 +23,6 @@ cookies = ""
 headers = ""
 
 def main():
-    internet_connection()
     login_option()
     user_info()
     menu()
@@ -32,8 +31,8 @@ def internet_connection():
     try:
         response = httpx.get("https://sinhvien1.tlu.edu.vn:443", timeout=5)
         return True
-    except httpx.ConnectError:
-        return False    
+    except httpx.ConnectError or httpx.ConnectTimeout:
+        return False
 if internet_connection() == False:
     print("The Internet is not connected.")
     exit()
@@ -52,6 +51,7 @@ def login():
         exit()
     else:
         print("Login successful !")
+        time.sleep(1)
         os.system('clear')
         cookies = {"token": urllib.parse.quote_plus(r.text)}
         access_token = "Bearer " + json.loads(r.text)['access_token']
@@ -104,6 +104,7 @@ def json_login():
         exit()
     else:
         print("Login successful !")
+        time.sleep(1)
         os.system('clear')
         cookies = {"token": urllib.parse.quote_plus(r.text)}
         access_token = "Bearer " + json.loads(r.text)['access_token']
@@ -142,6 +143,10 @@ def menu():
     elif option == '0':
         print("See you again !")
         exit()
+    else:
+        print("Invalid argument")
+        time.sleep(1)
+        menu()
 
 def course_list():
     r = httpx.get(course_url, headers=headers, cookies=cookies)
@@ -184,6 +189,9 @@ def auto_register():
         menu()
     else:
         print("Invalid argument")
+        time.sleep(1)
+        auto_register()
+
 def countdown():
     for x in range(int(starttime/1000) - int(time.time()), 0, -1):
         sec = x % 60
