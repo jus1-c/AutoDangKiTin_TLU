@@ -23,6 +23,7 @@ cookies = ""
 headers = ""
 
 def main():
+    internet_check()
     login_option()
     user_info()
     menu()
@@ -30,14 +31,19 @@ def main():
 def internet_connection():
     try:
         response = httpx.get("https://sinhvien1.tlu.edu.vn:443", timeout=5)
-        return True
+        return 0
     except httpx.ConnectTimeout:
-        return False
+        return 1
     except httpx.ConnectError:
-        return False
-if internet_connection() == False:
-    print("The Internet is not connected.")
-    exit()
+        return 2
+
+def internet_check():
+    if internet_connection() == 1:
+        print("Connection timeout")
+        exit()
+    elif internet_connection() == 2:
+        print("Please check your internet connection and try again !")
+        exit()
 
 def login():
     global username, password, login_data
@@ -122,6 +128,15 @@ def cookies_renew(r):
     access_token = "Bearer " + json.loads(r.text)['access_token']
     headers = {"Authorization" : access_token}
 
+def cookies_expire_check():
+    r = httpx.post(login_url, data=login_data)
+    expire_time = json.loads(r.text)['expires_in']
+    if expire_time < 5:
+        print("Renewing cookies, please wait...")
+        time.sleep(7)
+        cookies_renew(r)
+        os.system('clear')
+
 def menu():
     print("Welcome back, " + name)
     print("Your id is: " + str(student_id))
@@ -129,17 +144,20 @@ def menu():
     print("1. Course register")
     print("2. List all course and ID")
     print("3. Auto register")
-    print("4. Make a login JSON")
+    print("4. Create a login JSON")
     print("0. Exit")
     option = input("\nOption: ")
     if option == '1':
         os.system('clear')
+        cookies_expire_check()
         course_register()
     elif option == '2':
         os.system('clear')
+        cookies_expire_check()
         course_list()
     elif option == '3':
         os.system('clear')
+        cookies_expire_check()
         auto_register()
     elif option == '4':
         make_login_json()
@@ -156,14 +174,16 @@ def course_list():
     course_list = json.loads(r.text)
     course_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'])
     for i in range(course_length):
+        courseSubjectDtos_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'])
         if course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'] is not None:
             subcourse_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'])
             for j in range(subcourse_length):
                 print(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['displayName'])
                 print(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['id'])
         else:
-            print(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['subjectName'])
-            print(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['id'])
+            for k in range(courseSubjectDtos_length):
+                print(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['displayName'])
+                print(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['id'])
         print('')
     print("Press any key to continue...")
     input()
@@ -187,6 +207,7 @@ def auto_register():
     if option == 'Y' or option == 'y':
         os.system('clear')
         countdown()
+        cookies_expire_check()
     elif option == 'n' or option == 'N':
         os.system('clear')
         menu()
