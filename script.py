@@ -31,7 +31,9 @@ def internet_connection():
     try:
         response = httpx.get("https://sinhvien1.tlu.edu.vn:443", timeout=5)
         return True
-    except httpx.ConnectError or httpx.ConnectTimeout:
+    except httpx.ConnectTimeout:
+        return False
+    except httpx.ConnectError:
         return False
 if internet_connection() == False:
     print("The Internet is not connected.")
@@ -138,7 +140,6 @@ def menu():
         os.system('clear')
         auto_register()
     elif option == '4':
-        os.system('clear')
         make_login_json()
     elif option == '0':
         print("See you again !")
