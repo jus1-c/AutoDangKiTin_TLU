@@ -9,6 +9,9 @@ login_url = "https://sinhvien1.tlu.edu.vn:443/education/oauth/token"
 info_url = "https://sinhvien1.tlu.edu.vn:443/education/api/student/getstudentbylogin"
 semester_url = "https://sinhvien1.tlu.edu.vn:443/education/api/semester/semester_info"
 course_url = ""
+register_url = ""
+
+course_array = []
 
 username = ""
 password = ""
@@ -30,7 +33,7 @@ def main():
 
 def internet_connection():
     try:
-        response = httpx.get("https://sinhvien1.tlu.edu.vn:443", timeout=5)
+        response = httpx.get(login_url, timeout=30)
         return 0
     except httpx.ConnectTimeout:
         return 1
@@ -46,7 +49,7 @@ def internet_check():
         exit()
 
 def login():
-    global username, password, login_data
+    global username, password
     username = input("Username: ")
     password = input("Password: ")
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
@@ -81,8 +84,6 @@ def make_login_json():
         "username": username,
         "password": password
     }
-    if os.path.exists("login.json"):
-        os.remove("login.json")
     with open("login.json", "w") as outfile:
         json.dump(login, outfile)
     print("Successful !")
@@ -91,7 +92,7 @@ def make_login_json():
     menu()
 
 def json_login():
-    global username, password, login_data
+    global username, password
     if os.path.exists("login.json") == False:
         print("You don't have a JSON login file !")
         time.sleep(1)
@@ -115,13 +116,14 @@ def json_login():
         cookies_renew(r)
 
 def user_info():
-    global student_id, name, course_url
+    global student_id, name, course_url, register_url
     r = httpx.get(info_url, headers=headers, cookies=cookies)
     name = json.loads(r.text)['displayName']
     student_id = json.loads(r.text)['id']
     r2 = httpx.get(semester_url, headers=headers, cookies=cookies)
     course_url = "https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/findByPeriod/" + str(student_id) + "/" + str(json.loads(r2.text)['semesterRegisterPeriods'][0]['id'])
-        
+    register_url = "https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/add-register/" + str(student_id) + "/" + str(json.loads(r2.text)['semesterRegisterPeriods'][0]['id'])
+
 def cookies_renew(r):
     global cookies, headers
     cookies = {"token": urllib.parse.quote_plus(r.text)}
@@ -133,9 +135,10 @@ def menu():
     print("Your id is: " + str(student_id))
     print("\n")
     print("1. Course register")
-    print("2. List all course and ID")
-    print("3. Auto register")
-    print("4. Create a login JSON")
+    print("2. Create a full course JSON file")
+    print("3. List all course and ID")
+    print("4. Auto register")
+    print("5. Create a login JSON")
     print("0. Exit")
     option = input("\nOption: ")
     if option == '1':
@@ -143,11 +146,14 @@ def menu():
         course_register()
     elif option == '2':
         os.system('clear')
-        course_list()
+        get_course_list()
     elif option == '3':
         os.system('clear')
-        auto_register()
+        course_list()
     elif option == '4':
+        os.system('clear')
+        auto_register()
+    elif option == '5':
         make_login_json()
     elif option == '0':
         print("See you again !")
@@ -155,55 +161,115 @@ def menu():
     else:
         print("Invalid argument")
         time.sleep(1)
+        os.system('clear')
         menu()
 
-def course_list():
+def get_course_list():
     r = httpx.get(course_url, headers=headers, cookies=cookies)
-    course_list = json.loads(r.text)
+    f = open("all_course.json", "w")
+    f.write(r.text)
+    print("Successful !")
+    time.sleep(1)
+    os.system('clear')
+    menu()
+
+def course_list():
+    if os.path.exists("all_course.json") == False:
+        print("You must create a full course JSON file to continue")
+        time.sleep(1)
+        os.system('clear')
+        menu()
+    f = open('all_course.json')
+    course_list = json.load(f)
     course_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'])
+    course_count = 0
     for i in range(course_length):
         if course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'] is not None:
             subcourse_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'])
             for j in range(subcourse_length):
                 sub_display_name = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['displayName']
-                sub_display_id = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['id']
                 sub_start_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['startDate']
                 sub_end_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['endDate']
                 sub_start_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['startHour']['startString']
                 sub_end_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['endHour']['endString']
                 sub_week_index = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['weekIndex']
-                print(sub_display_name, '(' ,sub_display_id,')')
+                print(course_count, ".", sub_display_name)
                 print(str(datetime.fromtimestamp(sub_start_date / 1000))[0:10], "->", str(datetime.fromtimestamp(sub_end_date / 1000))[0:10], end='')
                 print(' ||', week_index_c(sub_week_index), end='')
-                print(" ||" , sub_start_hour, "->", sub_end_hour)   
+                print(" ||" , sub_start_hour, "->", sub_end_hour)
+                course_count+=1
         else:
             courseSubjectDtos_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'])
             for k in range(courseSubjectDtos_length):
                 display_name = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['displayName']
-                display_id = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['id']
                 start_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['startDate']
                 end_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['endDate']
                 start_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['startHour']['startString']
                 end_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['endHour']['endString']
                 week_index = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['weekIndex']
-                print(display_name, '(' ,display_id , ')')
+                print(course_count, ".", display_name)
                 print(str(datetime.fromtimestamp(start_date / 1000))[0:10], "->", str(datetime.fromtimestamp(end_date / 1000))[0:10], end='')
                 print(' ||', week_index_c(week_index), end='')
                 print(" ||", start_hour, "->", end_hour)
+                course_count+=1
         print('')
     print("Press any key to continue...")
     input()
     os.system('clear')
     menu()
 
+def make_course_array():
+    global course_array
+    if len(course_array) > 0:
+        return
+    f = open('all_course.json')
+    course_list = json.load(f)
+    course_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'])
+    for i in range(course_length):
+        if course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'] is not None:
+            subcourse_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'])
+            for j in range(subcourse_length):
+                subcourse = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]
+                course_array.append(subcourse)
+        else:
+            courseSubjectDtos_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'])
+            for k in range(courseSubjectDtos_length):
+                course = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]
+                course_array.append(course)
+
 def course_register():
-    print("Not done yet !")
-    exit()
+    make_course_array()
+    option = input("Enter your course order in list option: ")
+    try:
+        val = int(option)
+        if val < 0 or val >= len(course_array):
+            print("Please enter a valid number !")
+        else:
+            r = httpx.post(register_url, headers=headers, cookies=cookies, json=course_array[val])
+            response = json.loads(r.text)
+            if response['status'] == 0:
+                print(response['message'])
+                time.sleep(1)
+                os.system('clear')
+                menu()
+            else:
+                print(response['message'])
+                time.sleep(1)
+                course_register()
+    except ValueError:
+        print("Invalid argument")
+        time.sleep(1)
+        course_register()
 
 def auto_register():
+    if os.path.exists("all_course.json") == False:
+        print("You must create a full course JSON file to continue")
+        time.sleep(1)
+        os.system('clear')
+        menu()
     global starttime, endtime
-    r = httpx.get(course_url, headers=headers, cookies=cookies)
-    time_get = json.loads(r.text)
+    f = open('all_course.json')
+    time_get = json.load(f)
     starttime = time_get['courseRegisterViewObject']['startDate']
     endtime = time_get['courseRegisterViewObject']['endDate']
     print("Current time: ", datetime.fromtimestamp(int(time.time())))
@@ -219,6 +285,7 @@ def auto_register():
     else:
         print("Invalid argument")
         time.sleep(1)
+        os.system('clear')
         auto_register()
 
 def countdown():
