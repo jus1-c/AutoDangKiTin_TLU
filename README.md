@@ -29,7 +29,7 @@ Với các thiết bị Windows thì nếu không muốn clone source bạn có 
 ```
 Với các thiết bị chạy linux, chỉ cần sửa 'pkg' thành 'apt' hoặc trình quản lí gói nào đấy tùy theo linux distro của bạn
 
-Sau khi cài xong thư viện thì clone source
+Sau khi cài xong thư viện thì clone source:
 
 ```sh
   git clone https://github.com/congthcstp/AutoDangKiTin_TLU
