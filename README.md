@@ -4,6 +4,8 @@ Không gì khác ngoài 1 project nho nhỏ của 1 thằng sv năm 2 khoa CNTT
 
 Các bước hướng dẫn dưới đây có thể dùng được cho cả android (termux) và các thiết bị chạy Windows/Linux/MacOS
 
+Lưu ý: các hệ thống android dùng termux sẽ không dùng được tính năng gửi lịch sang google Lịch
+
 Script yêu cầu python (hiển nhiên rồi, cái này được viết bằng python mà :v) và 1 số thư viện cài qua lệnh pip:
 
 ```sh
