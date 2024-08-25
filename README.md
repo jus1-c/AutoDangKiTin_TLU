@@ -7,7 +7,9 @@ Các bước hướng dẫn dưới đây có thể dùng được cho cả andr
 Script yêu cầu python (hiển nhiên rồi, cái này được viết bằng python mà :v) và 1 số thư viện cài qua lệnh pip:
 
 ```sh
-  pip install --upgrade google-api-python-client google-auth-httplib2 google-auth-oauthlib \
+  pip install --upgrade google-api-python-client google-auth-httplib2 google-auth-oauthlib
+```
+```sh
   pip install httpx 
 ```
 Cài đặt thêm git để clone source:
