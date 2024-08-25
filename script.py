@@ -40,6 +40,12 @@ def main():
     user_info()
     menu()
 
+def clear():
+    if os.name == 'nt':
+        os.system('cls')
+    else:
+        os.system('clear')
+
 def internet_connection():
     try:
         response = httpx.get(login_url, timeout=30)
@@ -62,7 +68,7 @@ def login():
     username = input("Username: ")
     password = input("Password: ")
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
-    r = httpx.post(login_url, data=login_data)
+    r = httpx.post(login_url, data=login_data, timeout=30)
     if 'error' in r.text:
         print("Password or username is incorrect !\n")
         main()
@@ -72,20 +78,20 @@ def login():
     else:
         print("Login successful !")
         time.sleep(1)
-        os.system('clear')
+        clear()
         cookies_renew(r)
 
 def login_option():
-    os.system('clear')
+    clear()
     print("Login option:\n")
     print("1. Manual login")
     print("2. Login with JSON file\n")
     option = input("Option: ")
     if option == '1':
-        os.system('clear')
+        clear()
         login()
     elif option == '2':
-        os.system('clear')
+        clear()
         json_login()
 
 def make_login_json():
@@ -97,7 +103,7 @@ def make_login_json():
         json.dump(login, outfile)
     print("Successful !")
     time.sleep(1)
-    os.system('clear')
+    clear()
     menu()
 
 def json_login():
@@ -111,7 +117,7 @@ def json_login():
     username = login['username']
     password = login['password']
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
-    r = httpx.post(login_url, data=login_data)
+    r = httpx.post(login_url, data=login_data, timeout=30)
     if 'error' in r.text:
         print("Password or username is incorrect !\n")
         main()
@@ -121,7 +127,7 @@ def json_login():
     else:
         print("Login successful !")
         time.sleep(1)
-        os.system('clear')
+        clear()
         cookies_renew(r)
 
 def user_info():
@@ -153,21 +159,21 @@ def menu():
     print("0. Exit")
     option = input("\nOption: ")
     if option == '1':
-        os.system('clear')
+        clear()
         manual_course_register()
     elif option == '2':
-        os.system('clear')
+        clear()
         get_course_list()
     elif option == '3':
-        os.system('clear')
+        clear()
         course_list()
     elif option == '4':
-        os.system('clear')
+        clear()
         auto_register()
     elif option == '5':
         make_login_json()
     elif option == '6':
-        os.system('clear')
+        clear()
         send_schedule_to_google()
     elif option == '0':
         print("See you again !")
@@ -175,25 +181,25 @@ def menu():
     else:
         print("Invalid argument")
         time.sleep(1)
-        os.system('clear')
+        clear()
         menu()
 
 def get_course_list():
     r = httpx.get(course_url, headers=headers, cookies=cookies)
-    f = open("all_course.json", "w")
-    f.write(r.text)
+    with open("all_course.json", "w", encoding="utf-8") as f:
+        f.write(r.text)
     print("Successful !")
     time.sleep(1)
-    os.system('clear')
+    clear()
     menu()
 
 def course_list():
     if os.path.exists("all_course.json") == False:
         print("You must create a full course JSON file to continue")
         time.sleep(1)
-        os.system('clear')
+        clear()
         menu()
-    f = open('all_course.json')
+    f = open('all_course.json', encoding="utf8")
     course_list = json.load(f)
     course_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'])
     course_count = 0
@@ -232,14 +238,14 @@ def course_list():
         print('')
     print("Press any key to continue...")
     input()
-    os.system('clear')
+    clear()
     menu()
 
 def make_course_array():
     global course_array
     if len(course_array) > 0:
         return
-    f = open('all_course.json')
+    f = open('all_course.json', encoding="utf8")
     course_list = json.load(f)
     course_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'])
     course_count = 0
@@ -260,7 +266,7 @@ def make_course_array():
 
 def manual_course_register():
     make_course_array()
-    option = input("Enter your course order in list option: ")
+    option = input("Enter your course order in list option (press a charater to escape): ")
     try:
         val = int(option)
         if val < 0 or val >= len(course_array):
@@ -273,18 +279,18 @@ def manual_course_register():
             if response['status'] == 0:
                 print(response['message'])
                 time.sleep(1)
-                os.system('clear')
+                clear()
                 menu()
             else:
                 print(response['message'])
                 time.sleep(1)
-                os.system('clear')
+                clear()
                 manual_course_register()
     except ValueError:
         print("Invalid argument")
         time.sleep(1)
-        os.system('clear')
-        manual_course_register()
+        clear()
+        menu()
 
 def auto_course_register(val):
     r = httpx.post(register_url, headers=headers, cookies=cookies, json=course_array[val])
@@ -307,7 +313,7 @@ def auto_register():
     if os.path.exists("all_course.json") == False:
         print("You must create a full course JSON file to continue")
         time.sleep(1)
-        os.system('clear')
+        clear()
         menu()
     global starttime, endtime
     f = open('all_course.json')
@@ -336,11 +342,8 @@ def send_schedule_to_google():
     if creds and creds.expired and creds.refresh_token:
       creds.refresh(Request())
     else:
-        try:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", calendar_url)
-            creds = flow.run_local_server(port=0)
-        except webbrowser.Error:
-            pass
+        flow = InstalledAppFlow.from_client_secrets_file("credentials.json", calendar_url)
+        creds = flow.run_local_server(port=0)
     with open("token.json", "w") as token:
       token.write(creds.to_json())
   cal = build('calendar', 'v3', credentials=creds)
