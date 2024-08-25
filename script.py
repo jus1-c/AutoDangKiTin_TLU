@@ -5,13 +5,22 @@ import os
 import time
 from datetime import datetime
 
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
 login_url = "https://sinhvien1.tlu.edu.vn:443/education/oauth/token"
 info_url = "https://sinhvien1.tlu.edu.vn:443/education/api/student/getstudentbylogin"
 semester_url = "https://sinhvien1.tlu.edu.vn:443/education/api/semester/semester_info"
 course_url = ""
 register_url = ""
+schedule_url = ""
+calendar_url = "https://www.googleapis.com/auth/calendar"
 
 course_array = []
+course_array_addr = []
 
 username = ""
 password = ""
@@ -116,13 +125,14 @@ def json_login():
         cookies_renew(r)
 
 def user_info():
-    global student_id, name, course_url, register_url
+    global student_id, name, course_url, register_url, schedule_url
     r = httpx.get(info_url, headers=headers, cookies=cookies)
     name = json.loads(r.text)['displayName']
     student_id = json.loads(r.text)['id']
     r2 = httpx.get(semester_url, headers=headers, cookies=cookies)
     course_url = "https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/findByPeriod/" + str(student_id) + "/" + str(json.loads(r2.text)['semesterRegisterPeriods'][0]['id'])
     register_url = "https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/add-register/" + str(student_id) + "/" + str(json.loads(r2.text)['semesterRegisterPeriods'][0]['id'])
+    schedule_url = "https://sinhvien1.tlu.edu.vn/education/api/StudentCourseSubject/studentLoginUser/" + str(json.loads(r2.text)['id'])
 
 def cookies_renew(r):
     global cookies, headers
@@ -139,11 +149,12 @@ def menu():
     print("3. List all course and ID")
     print("4. Auto register")
     print("5. Create a login JSON")
+    print("6. Send your schedule to google calendar")
     print("0. Exit")
     option = input("\nOption: ")
     if option == '1':
         os.system('clear')
-        course_register()
+        manual_course_register()
     elif option == '2':
         os.system('clear')
         get_course_list()
@@ -155,6 +166,9 @@ def menu():
         auto_register()
     elif option == '5':
         make_login_json()
+    elif option == '6':
+        os.system('clear')
+        send_schedule_to_google()
     elif option == '0':
         print("See you again !")
         exit()
@@ -183,7 +197,9 @@ def course_list():
     course_list = json.load(f)
     course_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'])
     course_count = 0
+    course_count2 = 0
     for i in range(course_length):
+        print('[', course_count2, ']')
         if course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'] is not None:
             subcourse_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'])
             for j in range(subcourse_length):
@@ -212,6 +228,7 @@ def course_list():
                 print(' ||', week_index_c(week_index), end='')
                 print(" ||", start_hour, "->", end_hour)
                 course_count+=1
+        course_count2+=1
         print('')
     print("Press any key to continue...")
     input()
@@ -225,25 +242,31 @@ def make_course_array():
     f = open('all_course.json')
     course_list = json.load(f)
     course_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'])
+    course_count = 0
     for i in range(course_length):
         if course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'] is not None:
             subcourse_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'])
             for j in range(subcourse_length):
                 subcourse = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]
                 course_array.append(subcourse)
+                course_count+=1
         else:
             courseSubjectDtos_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'])
             for k in range(courseSubjectDtos_length):
                 course = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]
                 course_array.append(course)
+                course_count+=1
+        course_array_addr.append(course_count)
 
-def course_register():
+def manual_course_register():
     make_course_array()
     option = input("Enter your course order in list option: ")
     try:
         val = int(option)
         if val < 0 or val >= len(course_array):
             print("Please enter a valid number !")
+            time.sleep(1)
+            manual_course_register()
         else:
             r = httpx.post(register_url, headers=headers, cookies=cookies, json=course_array[val])
             response = json.loads(r.text)
@@ -255,13 +278,32 @@ def course_register():
             else:
                 print(response['message'])
                 time.sleep(1)
-                course_register()
+                os.system('clear')
+                manual_course_register()
     except ValueError:
         print("Invalid argument")
         time.sleep(1)
-        course_register()
+        os.system('clear')
+        manual_course_register()
+
+def auto_course_register(val):
+    r = httpx.post(register_url, headers=headers, cookies=cookies, json=course_array[val])
+    response = json.loads(r.text)
+    try:
+        if response['status'] == 0:
+            return True
+        else:
+            return False
+    except httpx.ConnectError:
+        pass
+    except httpx.ConnectTimeout:
+        pass
 
 def auto_register():
+    print("Selected feature is in maintainance, try again later !")
+    time.sleep(1)
+    menu()
+    '''
     if os.path.exists("all_course.json") == False:
         print("You must create a full course JSON file to continue")
         time.sleep(1)
@@ -275,19 +317,8 @@ def auto_register():
     print("Current time: ", datetime.fromtimestamp(int(time.time())))
     print("Start date:   ", datetime.fromtimestamp(starttime / 1000))
     print("End date:     ", datetime.fromtimestamp(endtime / 1000), '\n')
-    option = input("Do you want to register automatic ? [Y/n]")
-    if option == 'Y' or option == 'y':
-        os.system('clear')
-        countdown()
-    elif option == 'n' or option == 'N':
-        os.system('clear')
-        menu()
-    else:
-        print("Invalid argument")
-        time.sleep(1)
-        os.system('clear')
-        auto_register()
-
+    print("1. ")
+'''
 def countdown():
     for x in range(int(starttime/1000) - int(time.time()), 0, -1):
         sec = x % 60
@@ -296,6 +327,62 @@ def countdown():
         times = f"{int(hrs):02}:{min:02}:{sec:02}"
         print("Schedule started, " + times + " remaining.", end='\r')
         time.sleep(1)
+
+def send_schedule_to_google():
+  creds = None
+  if os.path.exists("token.json"):
+    creds = Credentials.from_authorized_user_file("token.json", calendar_url)
+  if not creds or not creds.valid:
+    if creds and creds.expired and creds.refresh_token:
+      creds.refresh(Request())
+    else:
+      flow = InstalledAppFlow.from_client_secrets_file("credentials.json", calendar_url)
+      creds = flow.run_local_server(port=0)
+    with open("token.json", "w") as token:
+      token.write(creds.to_json())
+  cal = build('calendar', 'v3', credentials=creds)
+  schedule_arr = []
+  try:
+    r = httpx.get(schedule_url, headers=headers, cookies=cookies)
+    schedule = json.loads(r.text)
+    for i in range(len(schedule)):
+        title = schedule[i]['courseSubject']['displayName']
+        timetables_length = len(schedule[i]['courseSubject']['timetables'])
+        for j in range(timetables_length):
+            desc = schedule[i]['courseSubject']['timetables'][j]['startHour']['name'] + " -> " + schedule[i]['courseSubject']['timetables'][j]['endHour']['name'] + " || " + schedule[i]['courseSubject']['timetables'][j]['room']['name']
+            starttime = schedule[i]['courseSubject']['timetables'][j]['startHour']['startString']
+            endtime = schedule[i]['courseSubject']['timetables'][j]['endHour']['endString']
+            startdate = schedule[i]['courseSubject']['timetables'][j]['startDate'] / 1000
+            enddate = schedule[i]['courseSubject']['timetables'][j]['endDate'] / 1000
+            week_index = schedule[i]['courseSubject']['timetables'][j]['weekIndex']
+            while(startdate <= enddate):
+                start_datetime = startdate + (week_index_convert(week_index) * 86400)
+                start_datetime_str = str(datetime.fromtimestamp(start_datetime))[0:10] + 'T' + starttime + ":00+07:00"
+                end_datetime_str = str(datetime.fromtimestamp(start_datetime))[0:10] + 'T' + endtime + ":00+07:00"
+                startdate += 7 * 86400
+                event = {
+                    'summary': title,
+                    'description': desc,
+                    'start': {
+                        'dateTime': start_datetime_str,
+                    },
+                    'end': {
+                        'dateTime': end_datetime_str,
+                    },
+                    'reminders': {
+                        'useDefault': False,
+                        'overrides': [
+                            {'method': 'popup', 'minutes': 30},
+                            ],
+                        },
+                    }
+                schedule_arr.append(event)
+    for i in range(len(schedule_arr)):
+        event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i]).execute()
+        print('Event created: %s' % (event.get('htmlLink')))
+        time.sleep(0.5)
+  except HttpError as err:
+      print(err)
 
 def week_index_c(x):
     if x == 1:
@@ -312,5 +399,21 @@ def week_index_c(x):
         return "Fri"
     elif x == 7:
         return "Sat"
+
+def week_index_convert(x):
+    if x == 1:
+        return 6
+    elif x == 2:
+        return 0
+    elif x == 3:
+        return 1
+    elif x == 4:
+        return 2
+    elif x == 5:
+        return 3
+    elif x == 6:
+        return 4
+    elif x == 7:
+        return 5
 
 main()
