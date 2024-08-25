@@ -343,7 +343,7 @@ def send_schedule_to_google():
       creds.refresh(Request())
     else:
         flow = InstalledAppFlow.from_client_secrets_file("credentials.json", calendar_url)
-        creds = flow.run_local_server(port=0)
+        creds = flow.run_local_server(port=0, open_browser=False)
     with open("token.json", "w") as token:
       token.write(creds.to_json())
   cal = build('calendar', 'v3', credentials=creds)
