@@ -2,6 +2,13 @@
 
 Không gì khác ngoài 1 project nho nhỏ của 1 thằng sv năm 2 khoa CNTT
 
+Tính năng chính:
+- Auto đăng kí tín chỉ khi đến giờ (cái này đang code)
+- Tự động gửi lịch học lên google Lịch
+
+Lưu ý: Nếu trong quá trình gửi lịch lên google Lịch bị trục trặc, bạn nên xóa toàn bộ lịch trước đó bằng tay để tránh sự trùng lặp
+
+## Hướng dẫn
 Các bước hướng dẫn dưới đây có thể dùng được cho cả android (termux) và các thiết bị chạy Windows/Linux/MacOS
 
 Lưu ý: các hệ thống android dùng termux sẽ không dùng được tính năng gửi lịch sang google Lịch
@@ -36,6 +43,6 @@ Cuối cùng là chạy với lệnh:
 ```sh
   python3 script.py
 ```
-Lưu ý: có thể sẽ cần sửa 'python3' thành 'python' nếu không có lệnh 'python'
+Lưu ý: có thể sẽ cần sửa 'python3' thành 'python' nếu không có lệnh 'python3'
 
-Tính năng auto đăng kí tín hiện đang gặp 1 chút trục trặc nên chưa thể hoạt động, có thể tôi sẽ update sau :3
+Tính năng auto đăng kí tín hiện đang gặp 1 chút trục trặc nên chưa thể hoạt động, có thể sẽ update sau :3
