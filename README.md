@@ -20,6 +20,7 @@ pip install --upgrade google-api-python-client google-auth-httplib2 google-auth-
 pip install httpx 
 ```
 Cài đặt thêm git để clone source:
+
 Với các thiết bị Windows thì nếu không muốn clone source bạn có thể tải zip rồi giải nén ra cũng được
 
 ```sh
