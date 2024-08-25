@@ -336,8 +336,11 @@ def send_schedule_to_google():
     if creds and creds.expired and creds.refresh_token:
       creds.refresh(Request())
     else:
-      flow = InstalledAppFlow.from_client_secrets_file("credentials.json", calendar_url)
-      creds = flow.run_local_server(port=0)
+        try:
+            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", calendar_url)
+            creds = flow.run_local_server(port=0)
+        except webbrowser.Error:
+            pass
     with open("token.json", "w") as token:
       token.write(creds.to_json())
   cal = build('calendar', 'v3', credentials=creds)
