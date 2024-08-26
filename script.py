@@ -337,10 +337,10 @@ def countdown():
 def send_schedule_to_google():
   creds = None
   if os.path.exists("token.json"):
-    creds = Credentials.from_authorized_user_file("token.json", calendar_url)
+        creds = Credentials.from_authorized_user_file("token.json", calendar_url)
   if not creds or not creds.valid:
     if creds and creds.expired and creds.refresh_token:
-      creds.refresh(Request())
+        creds.refresh(Request())
     else:
         flow = InstalledAppFlow.from_client_secrets_file("credentials.json", calendar_url)
         creds = flow.run_local_server(port=0, open_browser=False)
@@ -387,6 +387,9 @@ def send_schedule_to_google():
         event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i]).execute()
         print('Event created: %s' % (event.get('htmlLink')))
         time.sleep(0.5)
+    print("\nPress any key to continue...")
+    input()
+    menu()
   except HttpError as err:
       print(err)
 
