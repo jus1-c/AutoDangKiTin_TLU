@@ -9,9 +9,11 @@ Tính năng chính:
 Lưu ý: Nếu trong quá trình gửi lịch lên google Lịch bị trục trặc, bạn nên xóa toàn bộ lịch trước đó bằng tay để tránh sự trùng lặp
 
 ## Hướng dẫn
-Các bước hướng dẫn dưới đây có thể dùng được cho cả android (termux) và các thiết bị chạy Windows/Linux/MacOS
+Các bước hướng dẫn dưới đây là dành cho thiết bị Android (termux), các thiết bị chạy Windows/Linux/MacOS cũng làm tương tự
 
-Với các thiết bị chạy linux, chỉ cần sửa 'pkg' thành 'apt' hoặc trình quản lí gói nào đấy tùy theo linux distro của bạn
+Cài đặt python cho Windows tại đây: https://apps.microsoft.com/detail/9ncvdn91xzqp?ocid=webpdpshare
+
+Với các thiết bị chạy Linux, chỉ cần sửa 'pkg' thành 'apt' hoặc trình quản lí gói nào đấy tùy theo linux distro của bạn
 
 Script yêu cầu python (hiển nhiên rồi, cái này được viết bằng python mà :v) và 1 số thư viện cài qua lệnh pip:
 ```sh
