@@ -30,6 +30,7 @@ student_id = ""
 
 starttime = 0
 endtime = 0
+global_timeout = 30
 
 cookies = ""
 headers = ""
@@ -48,14 +49,14 @@ def clear():
 
 def internet_connection():
     try:
-        response = httpx.get(login_url, timeout=30)
+        response = httpx.get(login_url, timeout=global_timeout)
         return 0
     except httpx.ConnectTimeout:
         return 1
-    except httpx.ConnectError:
-        return 2
     except httpx.ReadTimeout:
         return 1
+    except httpx.ConnectError:
+        return 2
 
 def internet_check():
     if internet_connection() == 1:
@@ -70,7 +71,7 @@ def login():
     username = input("Username: ")
     password = input("Password: ")
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
-    r = httpx.post(login_url, data=login_data, timeout=30)
+    r = httpx.post(login_url, data=login_data, timeout=global_timeout)
     if 'error' in r.text:
         print("Password or username is incorrect !\n")
         main()
@@ -119,7 +120,7 @@ def json_login():
     username = login['username']
     password = login['password']
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
-    r = httpx.post(login_url, data=login_data, timeout=30)
+    r = httpx.post(login_url, data=login_data, timeout=global_timeout)
     if 'error' in r.text:
         print("Password or username is incorrect !\n")
         main()
@@ -134,10 +135,10 @@ def json_login():
 
 def user_info():
     global student_id, name, course_url, register_url, schedule_url
-    r = httpx.get(info_url, headers=headers, cookies=cookies)
+    r = httpx.get(info_url, headers=headers, cookies=cookies, timeout=global_timeout)
     name = json.loads(r.text)['displayName']
     student_id = json.loads(r.text)['id']
-    r2 = httpx.get(semester_url, headers=headers, cookies=cookies)
+    r2 = httpx.get(semester_url, headers=headers, cookies=cookies, timeout=global_timeout)
     course_url = "https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/findByPeriod/" + str(student_id) + "/" + str(json.loads(r2.text)['semesterRegisterPeriods'][0]['id'])
     register_url = "https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/add-register/" + str(student_id) + "/" + str(json.loads(r2.text)['semesterRegisterPeriods'][0]['id'])
     schedule_url = "https://sinhvien1.tlu.edu.vn/education/api/StudentCourseSubject/studentLoginUser/" + str(json.loads(r2.text)['id'])
