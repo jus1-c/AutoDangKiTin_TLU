@@ -54,6 +54,8 @@ def internet_connection():
         return 1
     except httpx.ConnectError:
         return 2
+    except httpx.ReadTimeout:
+        return 1
 
 def internet_check():
     if internet_connection() == 1:
