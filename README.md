@@ -33,7 +33,7 @@ Nếu không muốn clone source bạn có thể tải zip rồi giải nén ra 
 pkg install git
 ```
 
-Sau khi cài xong thư viện thì clone source:
+Sau khi cài xong git thì clone source:
 
 ```sh
 git clone https://github.com/congthcstp/AutoDangKiTin_TLU
