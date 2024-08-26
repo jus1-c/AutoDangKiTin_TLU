@@ -11,22 +11,25 @@ Lưu ý: Nếu trong quá trình gửi lịch lên google Lịch bị trục tr�
 ## Hướng dẫn
 Các bước hướng dẫn dưới đây có thể dùng được cho cả android (termux) và các thiết bị chạy Windows/Linux/MacOS
 
-Script yêu cầu python (hiển nhiên rồi, cái này được viết bằng python mà :v) và 1 số thư viện cài qua lệnh pip:
+Với các thiết bị chạy linux, chỉ cần sửa 'pkg' thành 'apt' hoặc trình quản lí gói nào đấy tùy theo linux distro của bạn
 
+Script yêu cầu python (hiển nhiên rồi, cái này được viết bằng python mà :v) và 1 số thư viện cài qua lệnh pip:
+```sh
+pkg install python
+```
 ```sh
 pip install --upgrade google-api-python-client google-auth-httplib2 google-auth-oauthlib
 ```
 ```sh
-pip install httpx 
+pip install httpx
 ```
-Cài đặt thêm git để clone source:
+Cài đặt thêm git để clone source (tùy chọn):
 
-Với các thiết bị Windows thì nếu không muốn clone source bạn có thể tải zip rồi giải nén ra cũng được
+Nếu không muốn clone source bạn có thể tải zip rồi giải nén ra cũng được
 
 ```sh
 pkg install git
 ```
-Với các thiết bị chạy linux, chỉ cần sửa 'pkg' thành 'apt' hoặc trình quản lí gói nào đấy tùy theo linux distro của bạn
 
 Sau khi cài xong thư viện thì clone source:
 
