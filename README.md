@@ -17,6 +17,8 @@ Lưu ý: Nếu trong quá trình gửi lịch lên google Lịch bị trục tr�
 ## Hướng dẫn
 Các bước hướng dẫn dưới đây là dành cho thiết bị Android (termux), các thiết bị chạy Windows/Linux/MacOS cũng làm tương tự
 
+Cài đặt termux tại đây: https://github.com/termux/termux-app/releases
+
 Cài đặt python cho Windows tại đây: https://apps.microsoft.com/detail/9ncvdn91xzqp?ocid=webpdpshare
 
 Với các thiết bị chạy Linux, chỉ cần sửa 'pkg' thành 'apt' hoặc trình quản lí gói nào đấy tùy theo linux distro của bạn
