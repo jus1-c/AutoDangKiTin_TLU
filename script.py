@@ -20,7 +20,6 @@ schedule_url = ""
 calendar_url = "https://www.googleapis.com/auth/calendar"
 
 course_array = []
-course_array_addr = []
 
 username = ""
 password = ""
@@ -66,23 +65,32 @@ def internet_check():
         print("Please check your internet connection and try again !")
         exit()
 
+def login_check(r):
+    try:
+        if 'error' in r.text:
+            print("Password or username is incorrect !\n")
+            time.sleep(1)
+            main()
+        elif '502 Bad Gateway' in r.text:
+            print("Bad gateway at server, please try again !")
+            exit()
+        else:
+            print("Login successful !")
+            time.sleep(1)
+            clear()
+            cookies_renew(r)
+    except httpx.ConnectTimeout:
+        print("Connection timeout")
+    except httpx.ConnectError:
+        print("Please check your internet connection and try again !")
+
 def login():
     global username, password
     username = input("Username: ")
     password = input("Password: ")
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
     r = httpx.post(login_url, data=login_data, timeout=global_timeout)
-    if 'error' in r.text:
-        print("Password or username is incorrect !\n")
-        main()
-    elif '502 Bad Gateway' in r.text:
-        print("Bad gateway at server, please try again !")
-        exit()
-    else:
-        print("Login successful !")
-        time.sleep(1)
-        clear()
-        cookies_renew(r)
+    login_check(r)
 
 def login_option():
     clear()
@@ -121,17 +129,7 @@ def json_login():
     password = login['password']
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
     r = httpx.post(login_url, data=login_data, timeout=global_timeout)
-    if 'error' in r.text:
-        print("Password or username is incorrect !\n")
-        main()
-    elif '502 Bad Gateway' in r.text:
-        print("Bad gateway at server, please try again !")
-        exit()
-    else:
-        print("Login successful !")
-        time.sleep(1)
-        clear()
-        cookies_renew(r)
+    login_check(r)
 
 def user_info():
     global student_id, name, course_url, register_url, schedule_url
@@ -265,7 +263,6 @@ def make_course_array():
                 course = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]
                 course_array.append(course)
                 course_count+=1
-        course_array_addr.append(course_count)
 
 def manual_course_register():
     make_course_array()
