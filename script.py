@@ -338,13 +338,19 @@ def countdown():
 
 def send_schedule_to_google():
   creds = None
+  credentials = {"installed":{"client_id":"751761844308-sm651fopfkfsca418gi02hqiua231fa4.apps.googleusercontent.com",
+                              "project_id":"auto-schedule-433602","auth_uri":"https://accounts.google.com/o/oauth2/auth",
+                              "token_uri":"https://oauth2.googleapis.com/token",
+                              "auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs",
+                              "client_secret":"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",
+                              "redirect_uris":["http://localhost"]}}
   if os.path.exists("token.json"):
         creds = Credentials.from_authorized_user_file("token.json", calendar_url)
   if not creds or not creds.valid:
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
     else:
-        flow = InstalledAppFlow.from_client_secrets_file("credentials.json", calendar_url)
+        flow = InstalledAppFlow.from_client_config(credentials, calendar_url)
         creds = flow.run_local_server(port=0, open_browser=False)
     with open("token.json", "w") as token:
       token.write(creds.to_json())
