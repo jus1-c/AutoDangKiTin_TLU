@@ -8,6 +8,12 @@ Tính năng chính:
 
 Lưu ý: Nếu trong quá trình gửi lịch lên google Lịch bị trục trặc, bạn nên xóa toàn bộ lịch trước đó bằng tay để tránh sự trùng lặp
 
+## Tại sao lại là script của tôi mà không phải 1 cái app nào đấy trên Google Play ?
+1. Nó miễn phí: Bạn không phải trả 1 đồng nào hay xem 1 cái quảng cáo nào để kiếm tiền cho tôi cả
+2. Nó open source: Bạn có thể thêm, sửa, xóa source của tôi để phù hợp với mục đích của bạn, và bạn cũng có thể yên tâm là tôi chả húp tí thông tin nào của bạn đâu
+3. Nó có thể gửi lịch của bạn trực tiếp lên google Lịch: Tin tôi đi, google Lịch uy tín hơn nhiều so với 1 cái app nào đấy mà sẽ luôn chậm thông báo và đôi khi còn thông báo những cái đ** ai hỏi. Nó còn trực quan hơn nữa
+4. Nó có thể tự động đăng kí tín chỉ: Mặc dù tính năng này chỉ đang trong giai đoạn phát triển, nhưng việc nó hoàn thiện chỉ là sớm hay muộn mà thôi. Đến lúc đó bạn sẽ không bao giờ phải canh từng giây để đăng kí môn nữa, script sẽ làm hộ bạn từ A-Z
+
 ## Hướng dẫn
 Các bước hướng dẫn dưới đây là dành cho thiết bị Android (termux), các thiết bị chạy Windows/Linux/MacOS cũng làm tương tự
 
@@ -48,5 +54,3 @@ Cuối cùng là chạy với lệnh:
 python3 script.py
 ```
 Lưu ý: có thể sẽ cần sửa 'python3' thành 'python' nếu không có lệnh 'python3'
-
-Tính năng auto đăng kí tín hiện đang gặp 1 chút trục trặc nên chưa thể hoạt động, có thể sẽ update sau :3
