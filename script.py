@@ -81,8 +81,10 @@ def login_check(r):
             cookies_renew(r)
     except httpx.ConnectTimeout:
         print("Connection timeout")
+        exit()
     except httpx.ConnectError:
         print("Please check your internet connection and try again !")
+        exit()
 
 def login():
     global username, password
