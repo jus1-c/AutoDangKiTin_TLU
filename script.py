@@ -116,7 +116,6 @@ def make_login_json():
         json.dump(login, outfile)
     print("Successful !")
     time.sleep(1)
-    clear()
     menu()
 
 def json_login():
@@ -150,6 +149,7 @@ def cookies_renew(r):
     headers = {"Authorization" : access_token}
 
 def menu():
+    clear()
     print("Welcome back, " + name)
     print("Your id is: " + str(student_id))
     print("\n")
@@ -158,7 +158,7 @@ def menu():
     print("3. List all course and ID")
     print("4. Auto register")
     print("5. Create a login JSON")
-    print("6. Send your schedule to google calendar")
+    print("6. Sync your schedule to google calendar")
     print("0. Exit")
     option = input("\nOption: ")
     if option == '1':
@@ -184,7 +184,6 @@ def menu():
     else:
         print("Invalid argument")
         time.sleep(1)
-        clear()
         menu()
 
 def get_course_list():
@@ -193,14 +192,12 @@ def get_course_list():
         f.write(r.text)
     print("Successful !")
     time.sleep(1)
-    clear()
     menu()
 
 def course_list():
     if os.path.exists("all_course.json") == False:
         print("You must create a full course JSON file to continue")
         time.sleep(1)
-        clear()
         menu()
     f = open('all_course.json', encoding="utf8")
     course_list = json.load(f)
@@ -212,12 +209,17 @@ def course_list():
         if course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'] is not None:
             subcourse_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'])
             for j in range(subcourse_length):
-                sub_display_name = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['displayName']
-                sub_start_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['startDate']
-                sub_end_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['endDate']
-                sub_start_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['startHour']['startString']
-                sub_end_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['endHour']['endString']
-                sub_week_index = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['weekIndex']
+                try:
+                    sub_display_name = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['displayName']
+                    sub_start_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['startDate']
+                    sub_end_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['endDate']
+                    sub_start_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['startHour']['startString']
+                    sub_end_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['endHour']['endString']
+                    sub_week_index = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['weekIndex']
+                except TypeError:
+                    sub_start_hour = "None"
+                    sub_end_hour = "None"
+                    sub_week_index = "None"
                 print(course_count, ".", sub_display_name)
                 print(str(datetime.fromtimestamp(sub_start_date / 1000))[0:10], "->", str(datetime.fromtimestamp(sub_end_date / 1000))[0:10], end='')
                 print(' ||', week_index_c(sub_week_index), end='')
@@ -226,12 +228,17 @@ def course_list():
         else:
             courseSubjectDtos_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'])
             for k in range(courseSubjectDtos_length):
-                display_name = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['displayName']
-                start_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['startDate']
-                end_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['endDate']
-                start_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['startHour']['startString']
-                end_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['endHour']['endString']
-                week_index = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['weekIndex']
+                try:
+                    display_name = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['displayName']
+                    start_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['startDate']
+                    end_date = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['endDate']
+                    start_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['startHour']['startString']
+                    end_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['endHour']['endString']
+                    week_index = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['weekIndex']
+                except TypeError:
+                    start_hour = "None"
+                    end_hour = "None"
+                    week_index = "None"
                 print(course_count, ".", display_name)
                 print(str(datetime.fromtimestamp(start_date / 1000))[0:10], "->", str(datetime.fromtimestamp(end_date / 1000))[0:10], end='')
                 print(' ||', week_index_c(week_index), end='')
@@ -241,7 +248,6 @@ def course_list():
         print('')
     print("Press any key to continue...")
     input()
-    clear()
     menu()
 
 def make_course_array():
@@ -281,7 +287,6 @@ def manual_course_register():
             if response['status'] == 0:
                 print(response['message'])
                 time.sleep(1)
-                clear()
                 menu()
             else:
                 print(response['message'])
@@ -291,7 +296,6 @@ def manual_course_register():
     except ValueError:
         print("Invalid argument")
         time.sleep(1)
-        clear()
         menu()
 
 def auto_course_register(val):
@@ -315,7 +319,6 @@ def auto_register():
     if os.path.exists("all_course.json") == False:
         print("You must create a full course JSON file to continue")
         time.sleep(1)
-        clear()
         menu()
     global starttime, endtime
     f = open('all_course.json')
@@ -338,68 +341,108 @@ def countdown():
 
 def send_schedule_to_google():
   creds = None
-  credentials = {"installed":{"client_id":"751761844308-sm651fopfkfsca418gi02hqiua231fa4.apps.googleusercontent.com",
-                              "project_id":"auto-schedule-433602","auth_uri":"https://accounts.google.com/o/oauth2/auth",
+  credentials = {
+      "installed":{
+      "client_id":"751761844308-thsltjs8rp2l1r0tpqt13jan8981nenn.apps.googleusercontent.com",
+                              "project_id":"auto-schedule-433602",
+                              "auth_uri":"https://accounts.google.com/o/oauth2/auth",
                               "token_uri":"https://oauth2.googleapis.com/token",
                               "auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs",
-                              "client_secret":"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",
+                              "client_secret":"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",
                               "redirect_uris":["http://localhost"]}}
   if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", calendar_url)
+    creds = Credentials.from_authorized_user_file("token.json", calendar_url)
   if not creds or not creds.valid:
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
+      creds.refresh(Request())
     else:
-        flow = InstalledAppFlow.from_client_config(credentials, calendar_url)
-        creds = flow.run_local_server(port=0, open_browser=False)
+      flow = InstalledAppFlow.from_client_config(credentials, calendar_url)
+      creds = flow.run_local_server(port=0, open_browser=False)
     with open("token.json", "w") as token:
       token.write(creds.to_json())
   cal = build('calendar', 'v3', credentials=creds)
-  schedule_arr = []
   try:
-    r = httpx.get(schedule_url, headers=headers, cookies=cookies)
-    schedule = json.loads(r.text)
+        r = httpx.get(schedule_url, headers=headers, cookies=cookies)
+        schedule = json.loads(r.text)
+        schedule_arr = make_schedule_arr(schedule)
+        clear()
+        time.sleep(1)
+        print("Sync option:\n")
+        print("1. Sync specific course")
+        print("2. Sync all course")
+        print("0. Return to menu")
+        print("Warning: Use 'Sync all' option more than 1 times in a semester will cause overlap to your calendar\n")
+        option = input("Option: ")
+        if option == '0':
+            menu()
+        if option == '1':
+            clear()
+            for i in range(len(schedule_arr)):
+                print(i, '.', schedule_arr[i][0]['summary'], '\n')
+            sub_option_1 = input("Option: ")
+            if sub_option_1 >= 0 and sub_option_1 < len(schedule_arr):
+                for i in range(len(schedule_arr[sub_option_1])):
+                    event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[sub_option_1][i]).execute()
+                    print('Event created: %s' % (event.get('htmlLink')))
+                    time.sleep(0.5)
+                print("\nPress any key to continue...")
+                input()
+                send_schedule_to_google()
+        if option == '2':
+            clear()
+            for i in range(len(schedule_arr)):
+                for j in range(len(schedule_arr[i])):
+                    event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
+                    print('Event created: %s' % (event.get('htmlLink')))
+                    time.sleep(0.5)
+            print("\nPress any key to continue...")
+            input()
+            menu()
+        else:
+            print("Invalid argument")
+            time.sleep(1)
+            clear()
+            send_schedule_to_google()
+  except HttpError as err:
+        print(err)
+
+def make_schedule_arr(schedule):
+    schedule_arr = []
     for i in range(len(schedule)):
+        temp_arr = []
         title = schedule[i]['courseSubject']['displayName']
         timetables_length = len(schedule[i]['courseSubject']['timetables'])
         for j in range(timetables_length):
-            desc = schedule[i]['courseSubject']['timetables'][j]['startHour']['name'] + " -> " + schedule[i]['courseSubject']['timetables'][j]['endHour']['name'] + " || " + schedule[i]['courseSubject']['timetables'][j]['room']['name']
+            desc = schedule[i]['courseSubject']['timetables'][j]['startHour']['name'] + "->" + schedule[i]['courseSubject']['timetables'][j]['endHour']['name'] + " || " + schedule[i]['courseSubject']['timetables'][j]['room']['name']
             starttime = schedule[i]['courseSubject']['timetables'][j]['startHour']['startString']
             endtime = schedule[i]['courseSubject']['timetables'][j]['endHour']['endString']
             startdate = schedule[i]['courseSubject']['timetables'][j]['startDate'] / 1000
             enddate = schedule[i]['courseSubject']['timetables'][j]['endDate'] / 1000
             week_index = schedule[i]['courseSubject']['timetables'][j]['weekIndex']
-            while(startdate <= enddate):
+            while(startdate <= enddate + 86400):
                 start_datetime = startdate + (week_index_convert(week_index) * 86400)
                 start_datetime_str = str(datetime.fromtimestamp(start_datetime))[0:10] + 'T' + starttime + ":00+07:00"
                 end_datetime_str = str(datetime.fromtimestamp(start_datetime))[0:10] + 'T' + endtime + ":00+07:00"
                 startdate += 7 * 86400
                 event = {
-                    'summary': title,
-                    'description': desc,
-                    'start': {
-                        'dateTime': start_datetime_str,
-                    },
-                    'end': {
-                        'dateTime': end_datetime_str,
-                    },
-                    'reminders': {
-                        'useDefault': False,
-                        'overrides': [
-                            {'method': 'popup', 'minutes': 30},
-                            ],
+                        'summary': title,
+                        'description': desc,
+                        'start': {
+                            'dateTime': start_datetime_str,
                         },
-                    }
-                schedule_arr.append(event)
-    for i in range(len(schedule_arr)):
-        event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i]).execute()
-        print('Event created: %s' % (event.get('htmlLink')))
-        time.sleep(0.5)
-    print("\nPress any key to continue...")
-    input()
-    menu()
-  except HttpError as err:
-      print(err)
+                        'end': {
+                            'dateTime': end_datetime_str,
+                        },
+                        'reminders': {
+                            'useDefault': False,
+                            'overrides': [
+                                {'method': 'popup', 'minutes': 30},
+                                ],
+                            },
+                        }
+                temp_arr.append(event)
+        schedule_arr.insert(i, temp_arr)
+    return schedule_arr
 
 def week_index_c(x):
     if x == 1:
