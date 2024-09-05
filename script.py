@@ -10,6 +10,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from google.auth.exceptions import RefreshError
 
 login_url = "https://sinhvien1.tlu.edu.vn:443/education/oauth/token"
 info_url = "https://sinhvien1.tlu.edu.vn:443/education/api/student/getstudentbylogin"
@@ -134,7 +135,7 @@ def cookies_renew(r):
     global cookies, headers
     cookies = {"token": urllib.parse.quote_plus(r.text)}
     access_token = "Bearer " + json.loads(r.text)['access_token']
-    headers = {"Authorization" : access_token}
+    headers = {"Authorization" : access_token}  
 
 def get_course_list():
     try:
@@ -237,7 +238,11 @@ def send_schedule_to_google():
     creds = Credentials.from_authorized_user_file("token.json", calendar_url)
   if not creds or not creds.valid:
     if creds and creds.expired and creds.refresh_token:
-      creds.refresh(Request())
+        try:
+            creds.refresh(Request())
+        except RefreshError:
+            os.remove("token.json")
+            send_schedule_to_google()
     else:
       flow = InstalledAppFlow.from_client_config(credentials, calendar_url)
       creds = flow.run_local_server(port=0, open_browser=False)
