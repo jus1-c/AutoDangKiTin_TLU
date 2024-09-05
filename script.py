@@ -264,6 +264,7 @@ def send_schedule_to_google():
             for i in range(len(schedule_arr)):
                 print(i, '.', schedule_arr[i][0]['summary'], '\n')
             sub_option_1 = input("Lựa chọn: ")
+            clear()
             if int(sub_option_1) >= 0 and int(sub_option_1) < len(schedule_arr):
                 for i in range(len(schedule_arr[int(sub_option_1)])):
                     event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[int(sub_option_1)][i]).execute()
