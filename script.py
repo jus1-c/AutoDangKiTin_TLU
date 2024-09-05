@@ -189,7 +189,7 @@ def make_course_array():
 def auto_register():
     make_course_array()
     for i in range(len(course_array)):
-        print('[', i, '].', course_name_array[i], '\n')
+        print(i, '.', course_name_array[i], '\n')
     option = input("Chọn môn để đăng kí (nhập 'all' để  chọn tất cả)\nBạn có thể nhập nhiều môn 1 lúc bằng dấu cách: ")
     opt_list = option.split()
     try:
