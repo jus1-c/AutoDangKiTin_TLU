@@ -260,8 +260,7 @@ def send_schedule_to_google():
         print("2. Đồng bộ tất cả khóa học")
         print("3. Đăng xuất tài khoản google")
         print("0. Trở về menu")
-        print("Lưu ý: Không nên sử dụng lựa chọn 2 quá 1 lần trong 1 kì học vì sẽ dẫn đến sự trùng lặp\n")
-        option = input("Lựa chọn: ")
+        option = input("\nLựa chọn: ")
         if option == '0':
             menu()
         elif option == '1':
