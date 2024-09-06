@@ -224,32 +224,32 @@ def auto_send_request(val):
                 pass
 
 def send_schedule_to_google():
-  creds = None
-  credentials = {
-      "installed":{
-      "client_id":"751761844308-thsltjs8rp2l1r0tpqt13jan8981nenn.apps.googleusercontent.com",
-                              "project_id":"auto-schedule-433602",
-                              "auth_uri":"https://accounts.google.com/o/oauth2/auth",
-                              "token_uri":"https://oauth2.googleapis.com/token",
-                              "auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs",
-                              "client_secret":"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",
-                              "redirect_uris":["http://localhost"]}}
-  if os.path.exists("token.json"):
-    creds = Credentials.from_authorized_user_file("token.json", calendar_url)
-  if not creds or not creds.valid:
-    if creds and creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-        except RefreshError:
-            os.remove("token.json")
-            send_schedule_to_google()
-    else:
-      flow = InstalledAppFlow.from_client_config(credentials, calendar_url)
-      creds = flow.run_local_server(port=0, open_browser=False)
+    creds = None
+    credentials = {
+        "installed":{
+        "client_id":"751761844308-thsltjs8rp2l1r0tpqt13jan8981nenn.apps.googleusercontent.com",
+                                "project_id":"auto-schedule-433602",
+                                "auth_uri":"https://accounts.google.com/o/oauth2/auth",
+                                "token_uri":"https://oauth2.googleapis.com/token",
+                                "auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs",
+                                "client_secret":"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",
+                                "redirect_uris":["http://localhost"]}}
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", calendar_url)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                os.remove("token.json")
+                send_schedule_to_google()
+        else:
+            flow = InstalledAppFlow.from_client_config(credentials, calendar_url)
+            creds = flow.run_local_server(port=0, open_browser=False)
     with open("token.json", "w") as token:
-      token.write(creds.to_json())
-  cal = build('calendar', 'v3', credentials=creds)
-  try:
+        token.write(creds.to_json())
+    cal = build('calendar', 'v3', credentials=creds)
+    try:
         r = httpx.get(schedule_url, headers=headers, cookies=cookies)
         schedule = json.loads(r.text)
         schedule_arr = make_schedule_arr(schedule)
@@ -272,9 +272,20 @@ def send_schedule_to_google():
             clear()
             if int(sub_option_1) >= 0 and int(sub_option_1) < len(schedule_arr):
                 for i in range(len(schedule_arr[int(sub_option_1)])):
-                    event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[int(sub_option_1)][i]).execute()
-                    print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
-                    time.sleep(0.5)
+                    ev = cal.events().list(calendarId='primary',
+                            timeMin = schedule_arr[int(sub_option_1)][i]['start']['dateTime'],
+                            timeMax = schedule_arr[int(sub_option_1)][i]['end']['dateTime']).execute()
+                    try:
+                        if ev['items'][0]['summary'] == schedule_arr[int(sub_option_1)][i]['summary'] and ev['items'][0]['description'] == schedule_arr[int(sub_option_1)][i]['description']:
+                            continue
+                        else:
+                            cal.events().delete(calendarId='primary', eventId=ev['items'][0]['id']).execute()
+                            event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[int(sub_option_1)][i]).execute()
+                            print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
+                            time.sleep(0.5)
+                    except IndexError:
+                        event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[int(sub_option_1)][i]).execute()
+                        print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
                 print("\nNhấn phím bất kì để tiếp tục...")
                 input()
                 send_schedule_to_google()
@@ -282,9 +293,21 @@ def send_schedule_to_google():
             clear()
             for i in range(len(schedule_arr)):
                 for j in range(len(schedule_arr[i])):
-                    event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
-                    print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
-                    time.sleep(0.5)
+                    ev = cal.events().list(calendarId='primary',
+                        timeMin = schedule_arr[i][j]['start']['dateTime'],
+                        timeMax = schedule_arr[i][j]['end']['dateTime']).execute()
+                    try:
+                        if ev['items'][0]['summary'] == schedule_arr[i][j]['summary'] and ev['items'][0]['description'] == schedule_arr[i][j]['description']:
+                            continue
+                        else:
+                            cal.events().delete(calendarId='primary', eventId=ev['items'][0]['id']).execute()
+                            event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
+                            print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
+                            time.sleep(0.5)
+                    except IndexError:
+                        event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
+                        print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
+                        time.sleep(0.5)
             print("\nNhấn phím bất kì để tiếp tục...")
             input()
             menu()
@@ -298,8 +321,8 @@ def send_schedule_to_google():
             time.sleep(1)
             clear()
             send_schedule_to_google()
-  except HttpError as err:
-        print(err)
+    except HttpError as err:
+            print(err)
 
 def make_schedule_arr(schedule):
     schedule_arr = []
