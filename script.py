@@ -250,76 +250,12 @@ def send_schedule_to_google():
         token.write(creds.to_json())
     cal = build('calendar', 'v3', credentials=creds)
     try:
-        r = httpx.get(schedule_url, headers=headers, cookies=cookies)
+        r = httpx.get(schedule_url, headers=headers, cookies=cookies, timeout=global_timeout)
         schedule = json.loads(r.text)
         schedule_arr = make_schedule_arr(schedule)
         clear()
         time.sleep(1)
-        print("Lựa chọn đồng bộ:\n")
-        print("1. Đồng bộ khóa học cụ thể")
-        print("2. Đồng bộ tất cả khóa học")
-        print("3. Đăng xuất tài khoản google")
-        print("0. Trở về menu")
-        option = input("\nLựa chọn: ")
-        if option == '0':
-            menu()
-        elif option == '1':
-            clear()
-            for i in range(len(schedule_arr)):
-                print(i, '.', schedule_arr[i][0]['summary'], '\n')
-            sub_option_1 = input("Lựa chọn: ")
-            clear()
-            if int(sub_option_1) >= 0 and int(sub_option_1) < len(schedule_arr):
-                for i in range(len(schedule_arr[int(sub_option_1)])):
-                    ev = cal.events().list(calendarId='primary',
-                            timeMin = schedule_arr[int(sub_option_1)][i]['start']['dateTime'],
-                            timeMax = schedule_arr[int(sub_option_1)][i]['end']['dateTime']).execute()
-                    try:
-                        if ev['items'][0]['summary'] == schedule_arr[int(sub_option_1)][i]['summary'] and ev['items'][0]['description'] == schedule_arr[int(sub_option_1)][i]['description']:
-                            continue
-                        else:
-                            cal.events().delete(calendarId='primary', eventId=ev['items'][0]['id']).execute()
-                            event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[int(sub_option_1)][i]).execute()
-                            print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
-                            time.sleep(0.5)
-                    except IndexError:
-                        event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[int(sub_option_1)][i]).execute()
-                        print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
-                print("\nNhấn phím bất kì để tiếp tục...")
-                input()
-                send_schedule_to_google()
-        elif option == '2':
-            clear()
-            for i in range(len(schedule_arr)):
-                for j in range(len(schedule_arr[i])):
-                    ev = cal.events().list(calendarId='primary',
-                        timeMin = schedule_arr[i][j]['start']['dateTime'],
-                        timeMax = schedule_arr[i][j]['end']['dateTime']).execute()
-                    try:
-                        if ev['items'][0]['summary'] == schedule_arr[i][j]['summary'] and ev['items'][0]['description'] == schedule_arr[i][j]['description']:
-                            continue
-                        else:
-                            cal.events().delete(calendarId='primary', eventId=ev['items'][0]['id']).execute()
-                            event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
-                            print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
-                            time.sleep(0.5)
-                    except IndexError:
-                        event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
-                        print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
-                        time.sleep(0.5)
-            print("\nNhấn phím bất kì để tiếp tục...")
-            input()
-            menu()
-        elif option == '3':
-            print("Đăng xuất thành công !")
-            os.remove("token.json")
-            time.sleep(1)
-            menu()
-        else:
-            print("Đối số không hợp lệ")
-            time.sleep(1)
-            clear()
-            send_schedule_to_google()
+        send_schedule_menu(cal, schedule_arr)
     except HttpError as err:
             print(err)
 
@@ -336,7 +272,7 @@ def make_schedule_arr(schedule):
             startdate = schedule[i]['courseSubject']['timetables'][j]['startDate'] / 1000
             enddate = schedule[i]['courseSubject']['timetables'][j]['endDate'] / 1000
             week_index = schedule[i]['courseSubject']['timetables'][j]['weekIndex']
-            while(startdate <= enddate + 86400):
+            while(startdate < enddate):
                 start_datetime = startdate + (week_index_convert(week_index) * 86400)
                 start_datetime_str = str(datetime.fromtimestamp(start_datetime))[0:10] + 'T' + starttime + ":00+07:00"
                 end_datetime_str = str(datetime.fromtimestamp(start_datetime))[0:10] + 'T' + endtime + ":00+07:00"
@@ -360,6 +296,72 @@ def make_schedule_arr(schedule):
                 temp_arr.append(event)
         schedule_arr.insert(i, temp_arr)
     return schedule_arr
+
+def send_schedule_menu(cal, schedule_arr):
+        print("Lựa chọn đồng bộ:\n")
+        print("1. Đồng bộ khóa học cụ thể")
+        print("2. Đồng bộ tất cả khóa học")
+        print("3. Đăng xuất tài khoản google")
+        print("0. Trở về menu")
+        option = input("\nLựa chọn: ")
+        if option == '0':
+            menu()
+        elif option == '1':
+            clear()
+            for i in range(len(schedule_arr)):
+                print(i, '.', schedule_arr[i][0]['summary'], '\n')
+            sub_option_1 = input("Lựa chọn: ")
+            clear()
+            if int(sub_option_1) >= 0 and int(sub_option_1) < len(schedule_arr):
+                for i in range(len(schedule_arr[int(sub_option_1)])):
+                    ev = cal.events().list(calendarId='primary',
+                            timeMin = schedule_arr[int(sub_option_1)][i]['start']['dateTime'],
+                            timeMax = schedule_arr[int(sub_option_1)][i]['end']['dateTime']).execute()
+                    try:
+                        for j in range(len(ev['items'])):
+                            if ev['items'][j]['summary'] == schedule_arr[int(sub_option_1)][i]['summary']:
+                                cal.events().delete(calendarId='primary', eventId=ev['items'][j]['id']).execute()
+                                event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[int(sub_option_1)][i]).execute()
+                                print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
+                                break
+                    except IndexError:
+                        event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[int(sub_option_1)][i]).execute()
+                        print('Sự kiện được thêm mới: %s' % (event.get('htmlLink')))
+                print("\nNhấn phím bất kì để tiếp tục...")
+                input()
+                clear()
+                send_schedule_menu(cal, schedule_arr)
+        elif option == '2':
+            clear()
+            for i in range(len(schedule_arr)):
+                print(i, '.', schedule_arr[i][0]['summary'])
+                for j in range(len(schedule_arr[i])):
+                    ev = cal.events().list(calendarId='primary',
+                        timeMin = schedule_arr[i][j]['start']['dateTime'],
+                        timeMax = schedule_arr[i][j]['end']['dateTime']).execute()
+                    try:
+                        for k in range(len(ev['items'])):
+                            if ev['items'][k]['summary'] == schedule_arr[i][j]['summary']:
+                                cal.events().delete(calendarId='primary', eventId=ev['items'][k]['id']).execute()
+                                event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
+                                print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
+                                break
+                    except IndexError:
+                        event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
+                        print('Sự kiện được thêm mới: %s' % (event.get('htmlLink')))
+            print("\nNhấn phím bất kì để tiếp tục...")
+            input()
+            menu()
+        elif option == '3':
+            print("Đăng xuất thành công !")
+            os.remove("token.json")
+            time.sleep(1)
+            menu()
+        else:
+            print("Đối số không hợp lệ")
+            time.sleep(1)
+            clear()
+            send_schedule_to_google()
 
 def week_index_convert(x):
     if x == 1:
