@@ -253,6 +253,7 @@ def send_schedule_to_google():
         r = httpx.get(schedule_url, headers=headers, cookies=cookies, timeout=global_timeout)
         schedule = json.loads(r.text)
         schedule_arr = make_schedule_arr(schedule)
+        print(schedule_arr[0])
         clear()
         time.sleep(1)
         send_schedule_menu(cal, schedule_arr)
@@ -409,4 +410,5 @@ def menu():
         time.sleep(1)
         menu()
 
-main()
+if __name__ == "__main__":
+    main()
