@@ -75,7 +75,7 @@ def login_check(r):
             clear()
             login()
         elif '502 Bad Gateway' in r.text:
-            print("Phía server ngắt kết nối, vui lòng thử lại sau")
+            print("Lỗi 502, vui lòng thử lại sau")
             exit()
         else:
             print("Đăng nhập thành công !")
@@ -191,37 +191,48 @@ def auto_register():
     make_course_array()
     for i in range(len(course_array)):
         print(i, '.', course_name_array[i], '\n')
-    option = input("Chọn môn để đăng kí (nhập 'all' để  chọn tất cả)\nBạn có thể nhập nhiều môn 1 lúc bằng dấu cách: ")
+    option = input("Chọn môn để đăng kí (nhập 'all' để chọn tất cả)\nBạn có thể nhập nhiều môn 1 lúc bằng dấu cách: ")
     opt_list = option.split()
+    clear()
     try:
         for i in range(len(opt_list)):
             if opt_list[0] == 'all':
                 for i in range(len(course_array)):
-                    auto_send_request(i)
+                    if(auto_send_request(i)):
+                        print("Đã đăng kí thành công học phần " + course_name_array[i])
+                    else:
+                        print("Học phần" + course_name_array[i] + "đăng kí không thành công")
             if int(opt_list[i]) >= 0 and int(opt_list[i]) < len(course_array):
-                auto_send_request(i)
-    except TypeError:
+                if(auto_send_request(int(opt_list[i]))):
+                    print("Đã đăng kí thành công học phần " + course_name_array[int(opt_list[i])])
+                else:
+                    print("Học phần" + course_name_array[i] + "đăng kí không thành công")
+        print("\nNhấn phím bất kì để tiếp tục")
+        input()
+        menu()
+    except TypeError or ValueError:
         print("Lỗi đầu vào, vui lòng nhập lại")
         time.sleep(1)
         clear()
         auto_register()
-            
+
 def auto_send_request(val):
     global course_array
     while(1):
         for i in range(len(course_array[val])):
             try:
+                if course_array[i] == '0':
+                    continue
                 r = httpx.post(register_url, headers=headers, cookies=cookies, json=course_array[val][i])
                 response = json.loads(r.text)
-                if course_array[i] == None:
-                    continue
-                elif response['status'] == 0:
-                    course_array[i] = None
-                    return
-            except httpx.ConnectError:
-                pass
-            except httpx.ConnectTimeout:
-                pass
+                if response['status'] == 0:
+                    course_array[i] = '0'
+                    return True
+                if i+1 == len(course_array[val]):
+                    course_array[i] = '0'
+                    return False
+            except httpx.ConnectError or httpx.ConnectTimeout:
+                i = i - 1
 
 def send_schedule_to_google():
     creds = None
