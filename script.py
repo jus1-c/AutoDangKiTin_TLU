@@ -206,7 +206,7 @@ def auto_register():
                 if(auto_send_request(int(opt_list[i]))):
                     print("Đã đăng kí thành công học phần " + course_name_array[int(opt_list[i])])
                 else:
-                    print("Học phần" + course_name_array[i] + "đăng kí không thành công")
+                    print("Học phần " + course_name_array[i] + " đăng kí không thành công")
         print("\nNhấn phím bất kì để tiếp tục")
         input()
         menu()
@@ -221,15 +221,15 @@ def auto_send_request(val):
     while(1):
         for i in range(len(course_array[val])):
             try:
-                if course_array[i] == '0':
+                if course_array[val] == '0':
                     continue
                 r = httpx.post(register_url, headers=headers, cookies=cookies, json=course_array[val][i])
                 response = json.loads(r.text)
                 if response['status'] == 0:
-                    course_array[i] = '0'
+                    course_array[val] = '0'
                     return True
                 if i+1 == len(course_array[val]):
-                    course_array[i] = '0'
+                    course_array[val] = '0'
                     return False
             except httpx.ConnectError or httpx.ConnectTimeout:
                 i = i - 1
