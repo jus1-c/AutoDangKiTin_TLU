@@ -3,7 +3,7 @@
 Không gì khác ngoài 1 project nho nhỏ của 1 thằng sv năm 2 khoa CNTT
 
 Tính năng chính:
-- Auto đăng kí tín chỉ khi đến giờ (Đang trong giai đoạn thử nghiệm)
+- Auto đăng kí tín chỉ (Đang trong giai đoạn thử nghiệm)
 - Tự động gửi lịch học lên google Lịch
 
 Lưu ý: Nếu trong quá trình gửi lịch lên google Lịch bị trục trặc, bạn nên xóa toàn bộ lịch trước đó bằng tay để tránh sự trùng lặp
