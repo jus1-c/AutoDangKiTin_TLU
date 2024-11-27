@@ -332,7 +332,7 @@ def send_schedule_menu(cal, schedule_arr):
                             timeMin = schedule_arr[int(sub_option_1)][i]['start']['dateTime'],
                             timeMax = schedule_arr[int(sub_option_1)][i]['end']['dateTime']).execute()
                     try:
-                        for j in range(len(ev['items'])):
+                        for j in range(len(ev)):
                             if ev['items'][j]['summary'] == schedule_arr[int(sub_option_1)][i]['summary']:
                                 cal.events().delete(calendarId='primary', eventId=ev['items'][j]['id']).execute()
                                 event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[int(sub_option_1)][i]).execute()
@@ -354,7 +354,7 @@ def send_schedule_menu(cal, schedule_arr):
                         timeMin = schedule_arr[i][j]['start']['dateTime'],
                         timeMax = schedule_arr[i][j]['end']['dateTime']).execute()
                     try:
-                        for k in range(len(ev['items'])):
+                        for k in range(len(ev)):
                             if ev['items'][k]['summary'] == schedule_arr[i][j]['summary']:
                                 cal.events().delete(calendarId='primary', eventId=ev['items'][k]['id']).execute()
                                 event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
