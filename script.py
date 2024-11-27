@@ -2,6 +2,7 @@ import httpx
 import urllib.parse
 import json
 import os
+import sys
 import time
 from datetime import datetime
 
@@ -50,7 +51,7 @@ def clear():
 
 def internet_connection():
     try:
-        response = httpx.get(login_url, timeout=global_timeout)
+        response = httpx.get(login_url, timeout=global_timeout, verify=False)
         return 0
     except httpx.ConnectTimeout:
         return 1
@@ -62,10 +63,10 @@ def internet_connection():
 def internet_check():
     if internet_connection() == 1:
         print("Thời gian chờ quá lâu, vui lòng thử lại")
-        exit()
+        sys.exit()
     elif internet_connection() == 2:
         print("Vui lòng kiểm tra internet của bạn và thử lại sau")
-        exit()
+        sys.exit()
 
 def login_check(r):
     try:
@@ -76,7 +77,7 @@ def login_check(r):
             login()
         elif '502 Bad Gateway' in r.text:
             print("Lỗi 502, vui lòng thử lại sau")
-            exit()
+            sys.exit()
         else:
             print("Đăng nhập thành công !")
             time.sleep(1)
@@ -92,10 +93,10 @@ def login_check(r):
                     time.sleep(1)
     except httpx.ConnectTimeout:
         print("Thời gian chờ quá lâu, vui lòng thử lại")
-        exit()
+        sys.exit()
     except httpx.ConnectError:
         print("Vui lòng kiểm tra internet của bạn và thử lại sau")
-        exit()
+        sys.exit()
 
 def login():
     global username, password
@@ -108,7 +109,7 @@ def login():
         username = input("Username: ")
         password = input("Password: ")
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
-    r = httpx.post(login_url, data=login_data, timeout=global_timeout)
+    r = httpx.post(login_url, data=login_data, timeout=global_timeout, verify=False)
     login_check(r)
     cookies_renew(r)
 
@@ -123,10 +124,10 @@ def make_login_json():
 
 def user_info():
     global student_id, name, course_url, register_url, schedule_url
-    r = httpx.get(info_url, headers=headers, cookies=cookies, timeout=global_timeout)
+    r = httpx.get(info_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
     name = json.loads(r.text)['displayName']
     student_id = json.loads(r.text)['id']
-    r2 = httpx.get(semester_url, headers=headers, cookies=cookies, timeout=global_timeout)
+    r2 = httpx.get(semester_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
     course_url = "https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/findByPeriod/" + str(student_id) + "/" + str(json.loads(r2.text)['semesterRegisterPeriods'][0]['id'])
     register_url = "https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/add-register/" + str(student_id) + "/" + str(json.loads(r2.text)['semesterRegisterPeriods'][0]['id'])
     schedule_url = "https://sinhvien1.tlu.edu.vn/education/api/StudentCourseSubject/studentLoginUser/" + str(json.loads(r2.text)['id'])
@@ -139,7 +140,7 @@ def cookies_renew(r):
 
 def get_course_list():
     try:
-        r = httpx.get(course_url, headers=headers, cookies=cookies, timeout=global_timeout)
+        r = httpx.get(course_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
         print("Lấy dữ liệu thành công")
         with open("all_course.json", "w", encoding="utf-8") as f:
             f.write(r.text)
@@ -154,7 +155,7 @@ def get_course_list():
         else:
             print("Không thể kết nối đến máy chủ và không có dữ liệu từ lần chạy trước đó.\nScript sẽ tự ngắt sau 5 giây...")
             time.sleep(5)
-            exit()
+            sys.exit()
 
 def make_course_array():
     global course_array, course_name_array
@@ -171,7 +172,6 @@ def make_course_array():
             for j in range(subcourse_length):
                 try:
                     subcourse = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]
-                    sub_start_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][0]['subCourseSubjects'][j]['timetables'][0]['startHour']['startString']
                     temp_arr.append(subcourse)
                 except TypeError:
                     continue
@@ -180,7 +180,6 @@ def make_course_array():
             for k in range(courseSubjectDtos_length):
                 try:
                     course = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]
-                    start_hour = course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['courseSubjectDtos'][k]['timetables'][0]['startHour']['startString']
                     temp_arr.append(course)
                 except TypeError:
                     continue
@@ -195,18 +194,21 @@ def auto_register():
     opt_list = option.split()
     clear()
     try:
+        print("Đang tiến hành đăng kí, vui lòng đợi...")
+        time.sleep(2)
+        print("Tips: Chỉ nên chọn những môn thực sự quan trọng vì quá trình đăng kí sẽ rất lâu.\nÀ quên, môn nào nhập trước đăng kí trước nhé :3")
         for i in range(len(opt_list)):
             if opt_list[0] == 'all':
                 for i in range(len(course_array)):
                     if(auto_send_request(i)):
-                        print("Đã đăng kí thành công học phần " + course_name_array[i])
+                        print("Thành công: " + course_name_array[i])
                     else:
-                        print("Học phần" + course_name_array[i] + "đăng kí không thành công")
+                        print("Không thành công: " + course_name_array[i])
             if int(opt_list[i]) >= 0 and int(opt_list[i]) < len(course_array):
                 if(auto_send_request(int(opt_list[i]))):
-                    print("Đã đăng kí thành công học phần " + course_name_array[int(opt_list[i])])
+                    print("Thành công: " + course_name_array[int(opt_list[i])])
                 else:
-                    print("Học phần " + course_name_array[i] + " đăng kí không thành công")
+                    print("Không thành công: " + course_name_array[i])
         print("\nNhấn phím bất kì để tiếp tục")
         input()
         menu()
@@ -223,7 +225,7 @@ def auto_send_request(val):
             try:
                 if course_array[val] == '0':
                     continue
-                r = httpx.post(register_url, headers=headers, cookies=cookies, json=course_array[val][i])
+                r = httpx.post(register_url, headers=headers, cookies=cookies, json=course_array[val][i], verify=False)
                 response = json.loads(r.text)
                 if response['status'] == 0:
                     course_array[val] = '0'
@@ -261,7 +263,7 @@ def send_schedule_to_google():
         token.write(creds.to_json())
     cal = build('calendar', 'v3', credentials=creds)
     try:
-        r = httpx.get(schedule_url, headers=headers, cookies=cookies, timeout=global_timeout)
+        r = httpx.get(schedule_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
         schedule = json.loads(r.text)
         schedule_arr = make_schedule_arr(schedule)
         print(schedule_arr[0])
@@ -415,7 +417,7 @@ def menu():
         menu()
     elif option == '0':
         print("Gặp lại sau !")
-        exit()
+        sys.exit()
     else:
         print("Đối số không hợp lệ")
         time.sleep(1)
