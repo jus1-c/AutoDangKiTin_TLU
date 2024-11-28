@@ -186,6 +186,31 @@ def make_course_array():
         course_array.insert(i, temp_arr)
         course_name_array.append(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['subjectName'])
 
+def valid_time_checking():
+    time_get = json.load(open('all_course.json'))
+    starttime = time_get['courseRegisterViewObject']['startDate']
+    endtime = time_get['courseRegisterViewObject']['endDate']
+    str_starttime = datetime.fromtimestamp(starttime / 1000)
+    str_endtime = datetime.fromtimestamp(endtime / 1000)
+    current_time = datetime.fromtimestamp(int(time.time()))
+    print("Hiện tại:     ", current_time)
+    print("Bắt đầu:      ", str_starttime)
+    print("Kết thúc:     ", str_endtime, '\n')
+
+    if current_time >= str_endtime:
+        print("Đã hết thời gian đăng kí!")
+        time.sleep(2)
+        clear()
+        auto_register()
+    else:
+        for x in range(int(starttime/1000) - int(time.time()), 0, -1):
+            sec = x % 60
+            min = int(x/60) % 60
+            hrs = x / 3600
+            times = f"{int(hrs):02}:{min:02}:{sec:02}"
+            print("Bắt đầu chế độ tự động, " + times + " còn lại.", end='\r')
+            time.sleep(1)
+
 def auto_register():
     make_course_array()
     for i in range(len(course_array)):
@@ -194,9 +219,13 @@ def auto_register():
     opt_list = option.split()
     clear()
     try:
-        print("Đang tiến hành đăng kí, vui lòng đợi...")
+        print("Đang tiến hành đăng kí, vui lòng đợi...\n")
         time.sleep(2)
-        print("Tips: Chỉ nên chọn những môn thực sự quan trọng vì quá trình đăng kí sẽ rất lâu.\nÀ quên, môn nào nhập trước đăng kí trước nhé :3")
+        print("Tips: Chỉ nên chọn những môn thực sự quan trọng vì quá trình đăng kí sẽ rất lâu.\nÀ quên, môn nào nhập trước đăng kí trước nhé :3\n")
+        time.sleep(2)
+        clear()
+        time.sleep(2)
+        valid_time_checking()
         for i in range(len(opt_list)):
             if opt_list[0] == 'all':
                 for i in range(len(course_array)):
