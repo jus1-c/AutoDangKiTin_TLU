@@ -31,7 +31,7 @@ pkg install python
 pip install --upgrade google-api-python-client google-auth-httplib2 google-auth-oauthlib
 ```
 ```sh
-pip install httpx
+pip install httpx maskpass
 ```
 Cài đặt thêm git để clone source (tùy chọn):
 
