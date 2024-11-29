@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import time
+import maskpass
 from datetime import datetime
 
 from google.auth.transport.requests import Request
@@ -79,7 +80,7 @@ def login_check(r):
             print("Lỗi 502, vui lòng thử lại sau")
             sys.exit()
         else:
-            print("Đăng nhập thành công !")
+            print("\nĐăng nhập thành công !")
             time.sleep(1)
             clear()
             if os.path.exists("login.json") == False:
@@ -107,7 +108,7 @@ def login():
         password = login['password']
     else:
         username = input("Username: ")
-        password = input("Password: ")
+        password = maskpass.askpass(prompt="Password: ", mask="*")
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
     r = httpx.post(login_url, data=login_data, timeout=global_timeout, verify=False)
     login_check(r)
@@ -146,12 +147,11 @@ def get_course_list():
             f.write(r.text)
         time.sleep(1)
         clear()
-        return
     except httpx.ConnectTimeout or httpx.ConnectError or OSError:
         if os.path.exists("all_course.json"):
             print("Không thể kết nối đến máy chủ, script sẽ sử dụng dữ liệu từ lần chạy trước")
             time.sleep(1)
-            return
+            clear()
         else:
             print("Không thể kết nối đến máy chủ và không có dữ liệu từ lần chạy trước đó.\nScript sẽ tự ngắt sau 5 giây...")
             time.sleep(5)
@@ -187,7 +187,8 @@ def make_course_array():
         course_name_array.append(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'][i]['subjectName'])
 
 def valid_time_checking():
-    time_get = json.load(open('all_course.json'))
+    f = open("all_course.json", encoding="utf8")
+    time_get = json.load(f)
     starttime = time_get['courseRegisterViewObject']['startDate']
     endtime = time_get['courseRegisterViewObject']['endDate']
     str_starttime = datetime.fromtimestamp(starttime / 1000)
@@ -222,7 +223,7 @@ def auto_register():
         print("Đang tiến hành đăng kí, vui lòng đợi...\n")
         time.sleep(2)
         print("Tips: Chỉ nên chọn những môn thực sự quan trọng vì quá trình đăng kí sẽ rất lâu.\nÀ quên, môn nào nhập trước đăng kí trước nhé :3\n")
-        time.sleep(2)
+        time.sleep(4)
         clear()
         time.sleep(2)
         valid_time_checking()
@@ -248,7 +249,6 @@ def auto_register():
         auto_register()
 
 def auto_send_request(val):
-    global course_array
     while(1):
         for i in range(len(course_array[val])):
             try:
@@ -259,13 +259,13 @@ def auto_send_request(val):
                 if response['status'] == 0:
                     course_array[val] = '0'
                     return True
-                if i+1 == len(course_array[val]):
+                if i + 1 == len(course_array[val]):
                     course_array[val] = '0'
                     return False
             except httpx.ConnectError or httpx.ConnectTimeout:
                 i = i - 1
 
-def send_schedule_to_google():
+def make_token():
     creds = None
     credentials = {
         "installed":{
@@ -284,7 +284,7 @@ def send_schedule_to_google():
                 creds.refresh(Request())
             except RefreshError:
                 os.remove("token.json")
-                send_schedule_to_google()
+                make_token()
         else:
             flow = InstalledAppFlow.from_client_config(credentials, calendar_url)
             creds = flow.run_local_server(port=0, open_browser=False)
@@ -295,10 +295,9 @@ def send_schedule_to_google():
         r = httpx.get(schedule_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
         schedule = json.loads(r.text)
         schedule_arr = make_schedule_arr(schedule)
-        print(schedule_arr[0])
         clear()
         time.sleep(1)
-        send_schedule_menu(cal, schedule_arr)
+        schedule_menu(cal, schedule_arr)
     except HttpError as err:
             print(err)
 
@@ -340,7 +339,23 @@ def make_schedule_arr(schedule):
         schedule_arr.insert(i, temp_arr)
     return schedule_arr
 
-def send_schedule_menu(cal, schedule_arr):
+def send_schedule(cal, schedule_arr, i):
+    for j in range(len(schedule_arr[i])):
+        ev = cal.events().list(calendarId='primary',
+            timeMin = schedule_arr[i][j]['start']['dateTime'],
+            timeMax = schedule_arr[i][j]['end']['dateTime']).execute()
+        try:
+            for k in range(len(ev)):
+                if ev['items'][k]['summary'] == schedule_arr[i][j]['summary']:
+                    cal.events().delete(calendarId='primary', eventId=ev['items'][k]['id']).execute()
+                    event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
+                    print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
+                    break
+        except IndexError:
+            event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
+            print('Sự kiện được thêm mới: %s' % (event.get('htmlLink')))
+
+def schedule_menu(cal, schedule_arr):
         print("Lựa chọn đồng bộ:\n")
         print("1. Đồng bộ khóa học cụ thể")
         print("2. Đồng bộ tất cả khóa học")
@@ -356,42 +371,15 @@ def send_schedule_menu(cal, schedule_arr):
             sub_option_1 = input("Lựa chọn: ")
             clear()
             if int(sub_option_1) >= 0 and int(sub_option_1) < len(schedule_arr):
-                for i in range(len(schedule_arr[int(sub_option_1)])):
-                    ev = cal.events().list(calendarId='primary',
-                            timeMin = schedule_arr[int(sub_option_1)][i]['start']['dateTime'],
-                            timeMax = schedule_arr[int(sub_option_1)][i]['end']['dateTime']).execute()
-                    try:
-                        for j in range(len(ev)):
-                            if ev['items'][j]['summary'] == schedule_arr[int(sub_option_1)][i]['summary']:
-                                cal.events().delete(calendarId='primary', eventId=ev['items'][j]['id']).execute()
-                                event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[int(sub_option_1)][i]).execute()
-                                print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
-                                break
-                    except IndexError:
-                        event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[int(sub_option_1)][i]).execute()
-                        print('Sự kiện được thêm mới: %s' % (event.get('htmlLink')))
+                send_schedule(cal, schedule_arr, int(sub_option_1))
                 print("\nNhấn phím bất kì để tiếp tục...")
                 input()
                 clear()
-                send_schedule_menu(cal, schedule_arr)
+                schedule_menu(cal, schedule_arr)
         elif option == '2':
             clear()
             for i in range(len(schedule_arr)):
-                print(i, '.', schedule_arr[i][0]['summary'])
-                for j in range(len(schedule_arr[i])):
-                    ev = cal.events().list(calendarId='primary',
-                        timeMin = schedule_arr[i][j]['start']['dateTime'],
-                        timeMax = schedule_arr[i][j]['end']['dateTime']).execute()
-                    try:
-                        for k in range(len(ev)):
-                            if ev['items'][k]['summary'] == schedule_arr[i][j]['summary']:
-                                cal.events().delete(calendarId='primary', eventId=ev['items'][k]['id']).execute()
-                                event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
-                                print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
-                                break
-                    except IndexError:
-                        event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
-                        print('Sự kiện được thêm mới: %s' % (event.get('htmlLink')))
+                send_schedule(cal, schedule_arr, i)
             print("\nNhấn phím bất kì để tiếp tục...")
             input()
             menu()
@@ -404,7 +392,7 @@ def send_schedule_menu(cal, schedule_arr):
             print("Đối số không hợp lệ")
             time.sleep(1)
             clear()
-            send_schedule_to_google()
+            make_token()
 
 def week_index_convert(x):
     if x == 1:
@@ -438,7 +426,7 @@ def menu():
         auto_register()
     elif option == '2':
         clear()
-        send_schedule_to_google()
+        make_token()
     elif option == '3':
         os.remove("login.json")
         print("Đăng xuất thành công !")
