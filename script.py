@@ -31,8 +31,6 @@ login_data = ""
 name = ""
 student_id = ""
 
-starttime = 0
-endtime = 0
 global_timeout = 30
 
 cookies = ""
@@ -349,7 +347,7 @@ def send_schedule(cal, schedule_arr, i):
                 if ev['items'][k]['summary'] == schedule_arr[i][j]['summary']:
                     cal.events().delete(calendarId='primary', eventId=ev['items'][k]['id']).execute()
                     event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
-                    print('Sự kiện đã được thêm: %s' % (event.get('htmlLink')))
+                    print('Sự kiện được ghi đè: %s' % (event.get('htmlLink')))
                     break
         except IndexError:
             event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
@@ -379,8 +377,10 @@ def schedule_menu(cal, schedule_arr):
         elif option == '2':
             clear()
             for i in range(len(schedule_arr)):
+                print(i, '.', schedule_arr[i][0]['summary'])
                 send_schedule(cal, schedule_arr, i)
-            print("\nNhấn phím bất kì để tiếp tục...")
+                print()
+            print("Nhấn phím bất kì để tiếp tục...")
             input()
             menu()
         elif option == '3':
