@@ -257,10 +257,10 @@ def auto_send_request(val):
                 if response['status'] == 0:
                     course_array[val] = '0'
                     return True
-                if i + 1 == len(course_array[val]):
+                elif i + 1 == len(course_array[val]):
                     course_array[val] = '0'
                     return False
-            except httpx.ConnectError or httpx.ConnectTimeout:
+            except httpx.ConnectError or httpx.ConnectTimeout or httpx.ReadTimeout:
                 i = i - 1
 
 def make_token():
