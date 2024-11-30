@@ -200,7 +200,7 @@ def valid_time_checking():
         print("Đã hết thời gian đăng kí!")
         time.sleep(2)
         clear()
-        auto_register()
+        menu()
     else:
         for x in range(int(starttime/1000) - int(time.time()), 0, -1):
             sec = x % 60
@@ -381,8 +381,8 @@ def schedule_menu(cal, schedule_arr):
                 send_schedule(cal, schedule_arr, i)
                 print()
             print("Nhấn phím bất kì để tiếp tục...")
-            input()
-            menu()
+            clear()
+            schedule_menu(cal, schedule_arr)
         elif option == '3':
             print("Đăng xuất thành công !")
             os.remove("token.json")
