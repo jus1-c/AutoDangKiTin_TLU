@@ -30,10 +30,7 @@ Script yêu cầu python (hiển nhiên rồi, cái này được viết bằng 
 pkg install python
 ```
 ```sh
-pip install --upgrade google-api-python-client google-auth-httplib2 google-auth-oauthlib
-```
-```sh
-pip install httpx maskpass
+pip install -r requirements.txt
 ```
 Cài đặt thêm git để clone source (tùy chọn):
 
