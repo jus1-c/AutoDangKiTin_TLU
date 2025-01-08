@@ -26,6 +26,8 @@ calendar_url = "https://www.googleapis.com/auth/calendar"
 course_array = []
 course_name_array = []
 
+offline_mode = False
+
 username = ""
 password = ""
 login_data = ""
@@ -53,20 +55,26 @@ def internet_connection():
     try:
         response = httpx.get(login_url, timeout=global_timeout, verify=False)
         return 0
-    except httpx.ConnectTimeout:
+    except:
         return 1
-    except httpx.ReadTimeout:
-        return 1
-    except httpx.ConnectError:
-        return 2
 
 def internet_check():
-    if internet_connection() == 1:
-        print("Thời gian chờ quá lâu, vui lòng thử lại")
-        sys.exit()
-    elif internet_connection() == 2:
-        print("Vui lòng kiểm tra internet của bạn và thử lại sau")
-        sys.exit()
+    global offline_mode
+    status = internet_connection()
+    if(status == 1 and os.path.exists("token.json")):
+        option = input("Kết nối không ổn định, có muốn chuyển sang offline mode sử dụng token trước đó ?[Y/n]")
+        if option == 'Y' or option == 'y':
+            clear()
+            offline_mode = True
+            time.sleep(1)
+            menu_offline()
+        elif option == 'N' or option == 'n':
+            clear()
+            main()
+        else:
+            print("Đối số không hợp lệ, script đang thoát...")
+            time.sleep(1)
+            sys.exit()
 
 def login_check(r):
     try:
@@ -107,6 +115,8 @@ def login():
         headers = {"Authorization": token['Authorization']}
         r = httpx.get(info_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
         if "error" not in r.text:
+            print("Đang đăng nhập tự động bằng token...")
+            time.sleep(1)
             return
     if os.path.exists("login.json"):
         f = open("login.json")
@@ -139,6 +149,13 @@ def user_info():
     course_url = "https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/findByPeriod/" + str(student_id) + "/" + str(json.loads(r2.text)['semesterRegisterPeriods'][0]['id'])
     register_url = "https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/add-register/" + str(student_id) + "/" + str(json.loads(r2.text)['semesterRegisterPeriods'][0]['id'])
     schedule_url = "https://sinhvien1.tlu.edu.vn/education/api/StudentCourseSubject/studentLoginUser/" + str(json.loads(r2.text)['id'])
+    u_info = {
+        "course_url": course_url,
+        "register_url": register_url,
+        "schedule_url": schedule_url
+    }
+    with open("user_info.json", "w") as outfile:
+        json.dump(u_info, outfile)
 
 def get_token(r):
     global cookies, headers
@@ -160,7 +177,7 @@ def get_course_list():
             f.write(r.text)
         time.sleep(1)
         clear()
-    except httpx.ConnectTimeout or httpx.ConnectError or OSError:
+    except:
         if os.path.exists("all_course.json"):
             print("Không thể kết nối đến máy chủ, script sẽ sử dụng dữ liệu từ lần chạy trước")
             time.sleep(1)
@@ -236,25 +253,28 @@ def auto_register():
         print("Đang tiến hành đăng kí, vui lòng đợi...\n")
         time.sleep(2)
         print("Tips: Chỉ nên chọn những môn thực sự quan trọng vì quá trình đăng kí sẽ rất lâu.\nÀ quên, môn nào nhập trước đăng kí trước nhé :3\n")
-        time.sleep(4)
+        time.sleep(3)
         clear()
         time.sleep(2)
-        valid_time_checking()
-        for i in range(len(opt_list)):
+        #valid_time_checking()
+        for _ in range(len(opt_list)):
             if opt_list[0] == 'all':
-                for i in range(len(course_array)):
-                    if(auto_send_request(i)):
-                        print("Thành công: " + course_name_array[i])
+                for j in range(len(course_array)):
+                    if(auto_send_request(j)):
+                        print("\nThành công: " + course_name_array[j])
                     else:
-                        print("Không thành công: " + course_name_array[i])
-            if int(opt_list[i]) >= 0 and int(opt_list[i]) < len(course_array):
-                if(auto_send_request(int(opt_list[i]))):
-                    print("Thành công: " + course_name_array[int(opt_list[i])])
+                        print("\nKhông thành công: " + course_name_array[j])
+            if int(opt_list[_]) >= 0 and int(opt_list[_]) < len(course_array):
+                if(auto_send_request(int(opt_list[_]))):
+                    print("\nThành công: " + course_name_array[int(opt_list[_])])
                 else:
-                    print("Không thành công: " + course_name_array[i])
-        print("\nNhấn phím bất kì để tiếp tục")
+                    print("\nKhông thành công: " + course_name_array[int(opt_list[_])])
+        print("\nNhấn phím bất kì để tiếp tục...")
         input()
-        menu()
+        if(offline_mode):
+            menu_offline()
+        else:
+            menu()
     except TypeError or ValueError:
         print("Lỗi đầu vào, vui lòng nhập lại")
         time.sleep(1)
@@ -268,34 +288,38 @@ def send_request(val, i):
         response = json.loads(r.text)
         if response['status'] == 0:
             thread_check[i] = 'True'
-        elif i + 1 == len(course_array[val]):
+        else:
             thread_check[i] = 'False'
-    except httpx.ConnectError or httpx.ConnectTimeout or httpx.ReadTimeout:
+    except Exception as err:
+        #print(err)
         thread_check[i] = 'Error'
 
 def auto_send_request(val):
     global thread_check
     thread_check = []
+    for i in range(len(course_array[val])):
+        thread_check.append('')
+        thread = threading.Thread(target=send_request, args=(val, i))
+        thread.start()
+    print("Số thread hiện tại: ", len(course_array[val]))
     while(1):
-        for i in range(len(course_array[val])):
-            thread_check.append('')
-
-        for i in range(len(course_array[val])):
-            thread = threading.Thread(target=send_request, args=(val, i))
-            thread.start()
-        print("Số thread hiện tại: ", len(course_array[val]))
-        while(1):
-            if 'True' in thread_check:
-                return True
-            elif 'Error' not in thread_check:
-                return False
-            elif 'Error' in thread_check:
+        print(thread_check, end='\r')
+        if 'True' in thread_check:
+            return True
+        elif '' not in thread_check:
+            if 'Error' in thread_check:
+                err_threads = []
                 for i in range(len(thread_check)):
                     if thread_check[i] == 'Error':
                         thread_check[i] == ''
                         thread = threading.Thread(target=send_request, args=(val, i))
+                        err_threads.append(thread)
                         thread.start()
-            time.sleep(0.1)
+                for thread in err_threads:
+                    thread.join()
+            else:
+                return False
+        time.sleep(0.1)
 
 def make_token():
     creds = None
@@ -463,6 +487,46 @@ def menu():
         make_token()
     elif option == '3':
         os.remove("login.json")
+        os.remove("token.json")
+        print("Đăng xuất thành công !")
+        time.sleep(1)
+        menu()
+    elif option == '0':
+        print("Gặp lại sau !")
+        sys.exit()
+    else:
+        print("Đối số không hợp lệ")
+        time.sleep(1)
+        menu()
+
+def offline_feature():
+    global course_url, register_url, schedule_url, cookies, headers
+    f = open("user_info.json")
+    url = json.load(f)
+    course_url = url['course_url']
+    register_url = url['register_url']
+    schedule_url = url['schedule_url']
+    f = open("token.json")
+    token = json.load(f)
+    cookies = {"token": token['token']}
+    headers = {"Authorization": token['Authorization']}
+
+def menu_offline():
+    clear()
+    offline_feature()
+    print("---OFFLINE MODE---")
+    print("\n")
+    print("1. Tự động đăng kí tín chỉ")
+    print("2. Đăng xuất")
+    print("0. Thoát")
+
+    option = input("\nLựa chọn: ")
+    if option == '1':
+        clear()
+        auto_register()
+    elif option == '2':
+        os.remove("login.json")
+        os.remove("token.json")
         print("Đăng xuất thành công !")
         time.sleep(1)
         menu()
