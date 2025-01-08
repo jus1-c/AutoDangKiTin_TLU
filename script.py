@@ -258,7 +258,7 @@ def auto_register():
         time.sleep(3)
         clear()
         time.sleep(2)
-        #valid_time_checking()
+        valid_time_checking()
         for _ in range(len(opt_list)):
             if opt_list[0] == 'all':
                 for j in range(len(course_array)):
