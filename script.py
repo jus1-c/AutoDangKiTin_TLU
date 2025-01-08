@@ -1,3 +1,4 @@
+import threading
 import httpx
 import urllib.parse
 import json
@@ -98,7 +99,15 @@ def login_check(r):
         sys.exit()
 
 def login():
-    global username, password
+    global username, password, cookies, headers
+    if os.path.exists("token.json"):
+        f = open("token.json")
+        token = json.load(f)
+        cookies = {"token": token['token']}
+        headers = {"Authorization": token['Authorization']}
+        r = httpx.get(info_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
+        if "error" not in r.text:
+            return
     if os.path.exists("login.json"):
         f = open("login.json")
         login = json.load(f)
@@ -110,7 +119,7 @@ def login():
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
     r = httpx.post(login_url, data=login_data, timeout=global_timeout, verify=False)
     login_check(r)
-    cookies_renew(r)
+    get_token(r)
 
 def make_login_json():
     login = {
@@ -131,11 +140,17 @@ def user_info():
     register_url = "https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/add-register/" + str(student_id) + "/" + str(json.loads(r2.text)['semesterRegisterPeriods'][0]['id'])
     schedule_url = "https://sinhvien1.tlu.edu.vn/education/api/StudentCourseSubject/studentLoginUser/" + str(json.loads(r2.text)['id'])
 
-def cookies_renew(r):
+def get_token(r):
     global cookies, headers
     cookies = {"token": urllib.parse.quote_plus(r.text)}
     access_token = "Bearer " + json.loads(r.text)['access_token']
-    headers = {"Authorization" : access_token}  
+    headers = {"Authorization": access_token}
+    token = {
+        "token": urllib.parse.quote_plus(r.text),
+        "Authorization": access_token
+    }
+    with open("token.json", "w") as outfile:
+        json.dump(token, outfile)
 
 def get_course_list():
     try:
@@ -198,7 +213,7 @@ def valid_time_checking():
 
     if current_time >= str_endtime:
         print("Đã hết thời gian đăng kí!")
-        time.sleep(2)
+        time.sleep(3)
         clear()
         menu()
     else:
@@ -246,22 +261,41 @@ def auto_register():
         clear()
         auto_register()
 
+def send_request(val, i):
+    global thread_check
+    try:
+        r = httpx.post(register_url, headers=headers, cookies=cookies, json=course_array[val][i], verify=False)
+        response = json.loads(r.text)
+        if response['status'] == 0:
+            thread_check[i] = 'True'
+        elif i + 1 == len(course_array[val]):
+            thread_check[i] = 'False'
+    except httpx.ConnectError or httpx.ConnectTimeout or httpx.ReadTimeout:
+        thread_check[i] = 'Error'
+
 def auto_send_request(val):
+    global thread_check
+    thread_check = []
     while(1):
         for i in range(len(course_array[val])):
-            try:
-                if course_array[val] == '0':
-                    continue
-                r = httpx.post(register_url, headers=headers, cookies=cookies, json=course_array[val][i], verify=False)
-                response = json.loads(r.text)
-                if response['status'] == 0:
-                    course_array[val] = '0'
-                    return True
-                elif i + 1 == len(course_array[val]):
-                    course_array[val] = '0'
-                    return False
-            except httpx.ConnectError or httpx.ConnectTimeout or httpx.ReadTimeout:
-                i = i - 1
+            thread_check.append('')
+
+        for i in range(len(course_array[val])):
+            thread = threading.Thread(target=send_request, args=(val, i))
+            thread.start()
+        print("Số thread hiện tại: ", len(course_array[val]))
+        while(1):
+            if 'True' in thread_check:
+                return True
+            elif 'Error' not in thread_check:
+                return False
+            elif 'Error' in thread_check:
+                for i in range(len(thread_check)):
+                    if thread_check[i] == 'Error':
+                        thread_check[i] == ''
+                        thread = threading.Thread(target=send_request, args=(val, i))
+                        thread.start()
+            time.sleep(0.1)
 
 def make_token():
     creds = None
