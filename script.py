@@ -5,7 +5,6 @@ import json
 import os
 import sys
 import time
-import maskpass
 from datetime import datetime
 
 from google.auth.transport.requests import Request
@@ -128,7 +127,7 @@ def login():
         password = login['password']
     else:
         username = input("Username: ")
-        password = maskpass.askpass(prompt="Password: ", mask="*")
+        password = input("Password: ")
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
     r = httpx.post(login_url, data=login_data, timeout=global_timeout, verify=False)
     login_check(r)
