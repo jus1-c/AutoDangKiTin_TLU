@@ -75,6 +75,9 @@ def internet_check():
             print("Đối số không hợp lệ, script đang thoát...")
             time.sleep(1)
             sys.exit()
+    else:
+        print("Kết nối không ổn định và không có dữ liệu từ lần chạy trước, vui lòng thử lại sau")
+        sys.exit()
 
 def login_check(r):
     try:
