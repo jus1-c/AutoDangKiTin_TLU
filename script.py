@@ -227,7 +227,7 @@ def valid_time_checking():
         clear()
         menu()
     else:
-        for x in range(int(starttime/1000) - int(time.time()), 0, -1):
+        for x in range(int(starttime/1000) - int(time.time()) - 5, 0, -1):
             sec = x % 60
             min = int(x/60) % 60
             hrs = x / 3600
