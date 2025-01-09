@@ -256,10 +256,10 @@ def auto_register():
         print("Đang tiến hành đăng kí, vui lòng đợi...\n")
         time.sleep(2)
         print("Tips: Chỉ nên chọn những môn thực sự quan trọng vì quá trình đăng kí sẽ rất lâu.\nÀ quên, môn nào nhập trước đăng kí trước nhé :3\n")
-        time.sleep(3)
-        clear()
         time.sleep(2)
-        valid_time_checking()
+        clear()
+        time.sleep(1)
+        #valid_time_checking()
         for _ in range(len(opt_list)):
             if opt_list[0] == 'all':
                 for j in range(len(course_array)):
@@ -311,15 +311,11 @@ def auto_send_request(val):
             return True
         elif '' not in thread_check:
             if 'Error' in thread_check:
-                err_threads = []
                 for i in range(len(thread_check)):
                     if thread_check[i] == 'Error':
                         thread_check[i] == ''
                         thread = threading.Thread(target=send_request, args=(val, i))
-                        err_threads.append(thread)
                         thread.start()
-                for thread in err_threads:
-                    thread.join()
             else:
                 return False
         time.sleep(0.1)
