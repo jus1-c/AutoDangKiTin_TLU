@@ -295,8 +295,7 @@ def send_request(val, i):
             thread_check[i] = 'Error'
         else:
             thread_check[i] = 'False'
-    except Exception as err:
-        #print(err)
+    except:
         thread_check[i] = 'Error'
 
 def auto_send_request(val):
