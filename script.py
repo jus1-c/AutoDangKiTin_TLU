@@ -91,17 +91,7 @@ def login_check(r):
             sys.exit()
         else:
             print("\nĐăng nhập thành công !")
-            time.sleep(1)
-            clear()
-            if os.path.exists("login.json") == False:
-                option = input("Bạn muốn lưu mật khẩu cho lần đăng nhập tiếp theo ? [Y/n]")
-                if option == 'Y' or option == 'y':
-                    make_login_json()
-                elif option == 'N' or option == 'n':
-                    pass
-                else:
-                    print("Đối số không hợp lệ, script sẽ không lưu mật khẩu")
-                    time.sleep(1)
+            make_login_json()
     except httpx.ConnectTimeout:
         print("Thời gian chờ quá lâu, vui lòng thử lại")
         sys.exit()
@@ -487,8 +477,11 @@ def menu():
         clear()
         make_token()
     elif option == '3':
-        os.remove("login.json")
-        os.remove("token.json")
+        try:
+            os.remove("login.json")
+            os.remove("token.json")
+        except:
+            pass
         print("Đăng xuất thành công !")
         time.sleep(1)
         menu()
@@ -526,9 +519,12 @@ def menu_offline():
         clear()
         auto_register()
     elif option == '2':
-        os.remove("login.json")
-        os.remove("token.json")
-        print("Đăng xuất thành công !")
+        try:
+            os.remove("login.json")
+            os.remove("token.json")
+            print("Đăng xuất thành công !")
+        except:
+            pass
         time.sleep(1)
         menu()
     elif option == '0':
