@@ -259,7 +259,7 @@ def auto_register():
         time.sleep(2)
         clear()
         time.sleep(1)
-        #valid_time_checking()
+        valid_time_checking()
         for _ in range(len(opt_list)):
             if opt_list[0] == 'all':
                 for j in range(len(course_array)):
@@ -306,7 +306,8 @@ def auto_send_request(val):
         thread.start()
     print("Số thread hiện tại: ", len(course_array[val]))
     while(1):
-        print(thread_check, end='\r')
+        #print(thread_check, end='\r')
+        print("Số thread hiện tại: ", len(course_array[val]))
         if 'True' in thread_check:
             return True
         elif '' not in thread_check:
