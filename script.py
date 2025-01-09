@@ -291,6 +291,8 @@ def send_request(val, i):
         response = json.loads(r.text)
         if response['status'] == 0:
             thread_check[i] = 'True'
+        elif response['status'] == -9:
+            thread_check[i] = 'Error'
         else:
             thread_check[i] = 'False'
     except Exception as err:
@@ -307,14 +309,14 @@ def auto_send_request(val):
     print("Số thread hiện tại: ", len(course_array[val]))
     while(1):
         #print(thread_check, end='\r')
-        print("Số thread hiện tại: ", len(course_array[val]))
         if 'True' in thread_check:
             return True
         elif '' not in thread_check:
             if 'Error' in thread_check:
                 for i in range(len(thread_check)):
                     if thread_check[i] == 'Error':
-                        thread_check[i] == ''
+                        thread_check[i] = ''
+                        print(thread_check)
                         thread = threading.Thread(target=send_request, args=(val, i))
                         thread.start()
             else:
