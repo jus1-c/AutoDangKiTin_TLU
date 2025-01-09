@@ -60,23 +60,24 @@ def internet_connection():
 def internet_check():
     global offline_mode
     status = internet_connection()
-    if(status == 1 and os.path.exists("token.json")):
-        option = input("Kết nối không ổn định, có muốn chuyển sang offline mode sử dụng token trước đó ?[Y/n]")
-        if option == 'Y' or option == 'y':
-            clear()
-            offline_mode = True
-            time.sleep(1)
-            menu_offline()
-        elif option == 'N' or option == 'n':
-            clear()
-            main()
+    if(status):
+        if(os.path.exists("token.json")):
+            option = input("Kết nối không ổn định, có muốn chuyển sang offline mode sử dụng token trước đó ?[Y/n]")
+            if option == 'Y' or option == 'y':
+                clear()
+                offline_mode = True
+                time.sleep(1)
+                menu_offline()
+            elif option == 'N' or option == 'n':
+                clear()
+                main()
+            else:
+                print("Đối số không hợp lệ, script đang thoát...")
+                time.sleep(1)
+                sys.exit()
         else:
-            print("Đối số không hợp lệ, script đang thoát...")
-            time.sleep(1)
+            print("Kết nối không ổn định và không có dữ liệu từ lần chạy trước, vui lòng thử lại sau")
             sys.exit()
-    else:
-        print("Kết nối không ổn định và không có dữ liệu từ lần chạy trước, vui lòng thử lại sau")
-        sys.exit()
 
 def login_check(r):
     try:
