@@ -280,11 +280,12 @@ def send_request(val, i):
         r = httpx.post(register_url, headers=headers, cookies=cookies, json=course_array[val][i], verify=False)
         response = json.loads(r.text)
         if response['status'] == 0:
+            print(response['message'])
             thread_check[i] = 'True'
         elif response['status'] == -9:
             thread_check[i] = 'Error'
         else:
-            print(response)
+            print(response['message'])
             thread_check[i] = 'False'
     except Exception as err:
         print(err)
