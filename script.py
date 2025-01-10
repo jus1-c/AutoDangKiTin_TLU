@@ -284,8 +284,10 @@ def send_request(val, i):
         elif response['status'] == -9:
             thread_check[i] = 'Error'
         else:
+            print(response)
             thread_check[i] = 'False'
-    except:
+    except Exception as err:
+        print(err)
         thread_check[i] = 'Error'
 
 def auto_send_request(val):
@@ -305,7 +307,6 @@ def auto_send_request(val):
                 for i in range(len(thread_check)):
                     if thread_check[i] == 'Error':
                         thread_check[i] = ''
-                        print(thread_check)
                         thread = threading.Thread(target=send_request, args=(val, i))
                         thread.start()
             else:
