@@ -37,6 +37,6 @@ cd AutoDangKiTin_TLU
 pip install -r requirements.txt
 ```
 ```sh
-python3 script.py
+python3 main.py
 ```
 Lưu ý: có thể sẽ cần sửa 'python3' thành 'python' nếu không có lệnh 'python3'
