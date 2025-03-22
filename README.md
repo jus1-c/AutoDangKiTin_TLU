@@ -1,7 +1,5 @@
 # AutoDangKiTin_TLU
 
-![cockroach](https://raw.githubusercontent.com/congthcstp/AutoDangKiTin_TLU/refs/heads/main/cockroach.gif)
-
 Không gì khác ngoài 1 project nho nhỏ của 1 thằng sv năm 2 khoa CNTT
 
 Tính năng chính:
