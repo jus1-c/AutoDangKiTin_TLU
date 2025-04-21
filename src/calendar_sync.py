@@ -1,16 +1,15 @@
 import httpx
 import json
 import os
-import time
 from datetime import datetime
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 from google.auth.exceptions import RefreshError
 
 calendar_url = "https://www.googleapis.com/auth/calendar"
+calendar_name = "TLU Schedule"
 
 def make_token(schedule_url, cookies, headers):
     creds = None
@@ -77,22 +76,33 @@ def make_schedule_arr(schedule):
         schedule_arr.insert(i, temp_arr)
     return schedule_arr
 
-def send_schedule(cal, schedule_arr, i):
+def rm_and_insert_new_schedule(cal):
+    page_token = None
+    while True:
+        calendar_list = cal.calendarList().list(pageToken=page_token).execute()
+        for item in range(len(calendar_list['items'])):
+            if calendar_name == calendar_list['items'][item]['summary']:
+                cal.calendars().delete(calendarId=calendar_list['items'][item]['id']).execute()
+                break
+        page_token = calendar_list.get('nextPageToken')
+        if not page_token:
+            break
+    
+    calendar = {
+        'summary': calendar_name,
+        'timeZone': 'Asia/Ho_Chi_Minh'
+    }
+    created_calendar = cal.calendars().insert(body=calendar).execute()
+    calendar_id = created_calendar['id']
+    return calendar_id
+
+def send_schedule(cal, schedule_arr, i, id):
     for j in range(len(schedule_arr[i])):
-        ev = cal.events().list(calendarId='primary', timeMin=schedule_arr[i][j]['start']['dateTime'], timeMax=schedule_arr[i][j]['end']['dateTime']).execute()
-        try:
-            for k in range(len(ev)):
-                if ev['items'][k]['summary'] == schedule_arr[i][j]['summary']:
-                    cal.events().delete(calendarId='primary', eventId=ev['items'][k]['id']).execute()
-                    event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
-                    print('Sự kiện được ghi đè: %s' % (event.get('htmlLink')))
-                    break
-        except IndexError:
-            event = cal.events().insert(calendarId='primary', sendNotifications=True, body=schedule_arr[i][j]).execute()
-            print('Sự kiện được thêm mới: %s' % (event.get('htmlLink')))
+        event = cal.events().insert(calendarId=id, sendNotifications=True, body=schedule_arr[i][j]).execute()
+        print('Sự kiện được thêm mới: %s' % (event.get('htmlLink')))
 
 def week_index_convert(x):
-    if x == 1: return 6
+    if x == 8: return 6
     elif x == 2: return 0
     elif x == 3: return 1
     elif x == 4: return 2

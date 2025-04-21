@@ -3,14 +3,9 @@ import json
 import os
 import sys
 import time
+from src.ui import clear
 
 global_timeout = 30
-
-def clear():
-    if os.name == 'nt':
-        os.system('cls')
-    else:
-        os.system('clear')
 
 def get_course_list(course_url, cookies, headers):
     try:

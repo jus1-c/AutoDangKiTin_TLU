@@ -19,14 +19,8 @@ def menu(name, student_id, offline_mode=False):
 
 def schedule_menu(schedule_arr):
     clear()
-    print("Lựa chọn đồng bộ:\n1. Đồng bộ khóa học cụ thể\n2. Đồng bộ tất cả khóa học\n3. Đăng xuất tài khoản google\n0. Trở về menu")
-    option = input("\nLựa chọn: ")
-    if option == '1':
-        clear()
-        for i in range(len(schedule_arr)):
-            print(i, '.', schedule_arr[i][0]['summary'], '\n')
-        return '1', input("Lựa chọn: ")
-    return option, None
+    print("Lựa chọn đồng bộ:\n1. Đồng bộ tất cả khoá học\n2. Đăng xuất tài khoản google\n0. Trở về menu")
+    return input("\nLựa chọn: ")
 
 def internet_check():
     option = input("Kết nối không ổn định, có muốn chuyển sang offline mode sử dụng token trước đó ?[Y/n]")

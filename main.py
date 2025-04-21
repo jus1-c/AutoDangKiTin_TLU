@@ -5,7 +5,7 @@ import json
 from src.auth import internet_connection, login, get_user_info
 from src.course import make_course_array
 from src.register import auto_register
-from src.calendar_sync import make_token, send_schedule
+from src.calendar_sync import make_token, send_schedule, rm_and_insert_new_schedule
 from src.ui import clear, menu, internet_check, schedule_menu as ui_schedule_menu
 
 def ensure_folder_exists(folder_path):
@@ -36,24 +36,19 @@ def main():
         elif option == '2' and not offline_mode:
             clear()
             cal, schedule_arr = make_token(schedule_url, cookies, headers)
-            sub_option, sub_choice = ui_schedule_menu(schedule_arr)
+            sub_option = ui_schedule_menu(schedule_arr)
             if sub_option == '0':
                 continue
             elif sub_option == '1':
                 clear()
-                if 0 <= int(sub_choice) < len(schedule_arr):
-                    send_schedule(cal, schedule_arr, int(sub_choice))
-                    print("\nNhấn phím bất kì để tiếp tục...")
-                    input()
-            elif sub_option == '2':
-                clear()
+                id = rm_and_insert_new_schedule(cal)
                 for i in range(len(schedule_arr)):
                     print(i, '.', schedule_arr[i][0]['summary'])
-                    send_schedule(cal, schedule_arr, i)
+                    send_schedule(cal, schedule_arr, i, id)
                     print()
                 print("Nhấn phím bất kì để tiếp tục...")
                 input()
-            elif sub_option == '3':
+            elif sub_option == '2':
                 print("Đăng xuất thành công !")
                 os.remove("res/token_google.json")
                 time.sleep(1)
