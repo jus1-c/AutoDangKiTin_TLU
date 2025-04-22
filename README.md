@@ -40,6 +40,3 @@ pip install -r requirements.txt
 python3 main.py
 ```
 Lưu ý: có thể sẽ cần sửa 'python3' thành 'python' nếu không có lệnh 'python3'
-
-
->Fact: T viết ra cái script này vì ghét cái app trên Google Play<
