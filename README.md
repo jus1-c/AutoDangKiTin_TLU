@@ -6,8 +6,6 @@ Tính năng chính:
 - Auto đăng kí tín chỉ (Đang trong giai đoạn thử nghiệm)
 - Tự động gửi lịch học lên google Lịch
 
-Lưu ý: Nếu trong quá trình gửi lịch lên google Lịch bị trục trặc, bạn nên xóa toàn bộ lịch trước đó bằng tay để tránh sự trùng lặp
-
 ## Tại sao lại là script của tôi mà không phải 1 cái app nào đấy trên Google Play ?
 1. Nó miễn phí: Bạn không phải trả 1 đồng nào hay xem 1 cái quảng cáo nào để kiếm tiền cho tôi cả
 2. Nó open source: Bạn có thể thêm, sửa, xóa source của tôi để phù hợp với mục đích của bạn, và bạn cũng có thể yên tâm là tôi chả húp tí thông tin nào của bạn đâu
