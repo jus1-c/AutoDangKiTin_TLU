@@ -46,8 +46,7 @@ def main():
                     print(i, '.', schedule_arr[i][0]['summary'])
                     send_schedule(cal, schedule_arr, i, id)
                     print()
-                print("Nhấn phím bất kì để tiếp tục...")
-                input()
+                input("Nhấn phím bất kì để tiếp tục...")
             elif sub_option == '2':
                 print("Đăng xuất thành công !")
                 os.remove("res/token_google.json")

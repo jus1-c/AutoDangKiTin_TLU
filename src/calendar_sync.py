@@ -48,9 +48,9 @@ def make_schedule_arr(schedule):
     schedule_arr = []
     for i in range(len(schedule)):
         temp_arr = []
-        title = schedule[i]['courseSubject']['displayName']
         timetables_length = len(schedule[i]['courseSubject']['timetables'])
         for j in range(timetables_length):
+            title = '[' + schedule[i]['courseSubject']['timetables'][j]['room']['name'] + '] ' + schedule[i]['courseSubject']['displayName']
             desc = schedule[i]['courseSubject']['timetables'][j]['startHour']['name'] + "->" + schedule[i]['courseSubject']['timetables'][j]['endHour']['name'] + " || " + schedule[i]['courseSubject']['timetables'][j]['room']['name']
             starttime = schedule[i]['courseSubject']['timetables'][j]['startHour']['startString']
             endtime = schedule[i]['courseSubject']['timetables'][j]['endHour']['endString']

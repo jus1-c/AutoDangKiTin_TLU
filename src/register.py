@@ -4,6 +4,8 @@ import threading
 import time
 from datetime import datetime
 
+thread_count = 20
+
 def valid_time_checking():
     with open("res/all_course.json", encoding="utf8") as f:
         time_get = json.load(f)
@@ -17,7 +19,8 @@ def valid_time_checking():
     print("Kết thúc:     ", str_endtime, '\n')
     if current_time >= str_endtime:
         print("Đã hết thời gian đăng kí!")
-        time.sleep(3)
+        time.sleep(1)
+        input("\nNhấn phím bất kì để tiếp tục...")
         return False
     else:
         for x in range(int(starttime/1000) - int(time.time()) - 5, 0, -1):
@@ -34,36 +37,37 @@ def send_request(val, i, register_url, cookies, headers, thread_check):
         r = httpx.post(register_url, headers=headers, cookies=cookies, json=val[i], verify=False)
         response = json.loads(r.text)
         if response['status'] == 0:
-            print(response['message'])
+            print("Debug:", response['message'])
             thread_check[i] = 'True'
         elif response['status'] == -9:
+            print("Error:", response['message'])
             thread_check[i] = 'Error'
         else:
             print(response['message'])
             thread_check[i] = 'False'
     except Exception as err:
-        print(err)
+        print("Error:", err)
         thread_check[i] = 'Error'
 
 def auto_send_request(val, course_array, register_url, cookies, headers):
-    thread_check = ['' for _ in range(len(course_array[val]))]
+    thread_check = ['' for _ in range(thread_count)]
     for i in range(len(course_array[val])):
-        thread = threading.Thread(target=send_request, args=(course_array[val], i, register_url, cookies, headers, thread_check))
-        thread.start()
-    print("Số thread hiện tại: ", len(course_array[val]))
-    while True:
-        if 'True' in thread_check:
-            return True
-        elif '' not in thread_check:
-            if 'Error' in thread_check:
-                for i in range(len(thread_check)):
-                    if thread_check[i] == 'Error':
-                        thread_check[i] = ''
-                        thread = threading.Thread(target=send_request, args=(course_array[val], i, register_url, cookies, headers, thread_check))
-                        thread.start()
-            else:
-                return False
-        time.sleep(0.1)
+        for j in range(thread_count):
+            thread = threading.Thread(target=send_request, args=(course_array[val], i, register_url, cookies, headers, thread_check))
+            thread.start()
+            while True:
+                if 'True' in thread_check:
+                    return True
+                elif '' not in thread_check:
+                    if 'Error' in thread_check:
+                        for i in range(len(thread_check)):
+                            if thread_check[i] == 'Error':
+                                thread_check[i] = ''
+                                thread = threading.Thread(target=send_request, args=(course_array[val], i, register_url, cookies, headers, thread_check))
+                                thread.start()
+                    else:
+                        return False
+                time.sleep(0.1)
 
 def auto_register(course_array, course_name_array, register_url, cookies, headers):
     for i in range(len(course_array)):
@@ -88,5 +92,4 @@ def auto_register(course_array, course_name_array, register_url, cookies, header
                 print("\nThành công: " + course_name_array[int(opt)])
             else:
                 print("\nKhông thành công: " + course_name_array[int(opt)])
-    print("\nNhấn phím bất kì để tiếp tục...")
-    input()
+    input("\nNhấn phím bất kì để tiếp tục...")
