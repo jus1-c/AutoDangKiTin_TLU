@@ -78,8 +78,8 @@ def auto_register(course_array, course_name_array, register_url, cookies, header
     time.sleep(2)
     print("Tips: Chỉ nên chọn những môn thực sự quan trọng vì quá trình đăng kí sẽ rất lâu.\nÀ quên, môn nào nhập trước đăng kí trước nhé :3\n")
     time.sleep(2)
-    # if not valid_time_checking():
-    #     return
+    if not valid_time_checking():
+        return
     for opt in opt_list:
         if opt == 'all':
             for j in range(len(course_array)):
