@@ -34,13 +34,13 @@ def valid_time_checking():
 
 def send_request(val, i, register_url, cookies, headers, thread_check):
     try:
-        r = httpx.post(register_url, headers=headers, cookies=cookies, json=val[i], verify=False)
+        r = httpx.post(register_url, headers=headers, cookies=cookies, json=val, verify=False, timeout=30)
         response = json.loads(r.text)
         if response['status'] == 0:
             print("Debug:", response['message'])
             thread_check[i] = 'True'
         elif response['status'] == -9:
-            print("Error:", response['message'])
+            print(response['message'])
             thread_check[i] = 'Error'
         else:
             print(response['message'])
@@ -53,21 +53,21 @@ def auto_send_request(val, course_array, register_url, cookies, headers):
     thread_check = ['' for _ in range(thread_count)]
     for i in range(len(course_array[val])):
         for j in range(thread_count):
-            thread = threading.Thread(target=send_request, args=(course_array[val], i, register_url, cookies, headers, thread_check))
+            thread = threading.Thread(target=send_request, args=(course_array[val][i], j, register_url, cookies, headers, thread_check))
             thread.start()
-            while True:
-                if 'True' in thread_check:
-                    return True
-                elif '' not in thread_check:
-                    if 'Error' in thread_check:
-                        for i in range(len(thread_check)):
-                            if thread_check[i] == 'Error':
-                                thread_check[i] = ''
-                                thread = threading.Thread(target=send_request, args=(course_array[val], i, register_url, cookies, headers, thread_check))
-                                thread.start()
-                    else:
-                        return False
-                time.sleep(0.1)
+        while True:
+            if 'True' in thread_check:
+                return True
+            elif '' not in thread_check:
+                if 'Error' in thread_check:
+                    for k in range(len(thread_check)):
+                        if thread_check[k] == 'Error':
+                            thread_check[k] = ''
+                            thread = threading.Thread(target=send_request, args=(course_array[val][i], k, register_url, cookies, headers, thread_check))
+                            thread.start()
+                else:
+                    return False
+            time.sleep(0.1)
 
 def auto_register(course_array, course_name_array, register_url, cookies, headers):
     for i in range(len(course_array)):
@@ -78,8 +78,8 @@ def auto_register(course_array, course_name_array, register_url, cookies, header
     time.sleep(2)
     print("Tips: Chỉ nên chọn những môn thực sự quan trọng vì quá trình đăng kí sẽ rất lâu.\nÀ quên, môn nào nhập trước đăng kí trước nhé :3\n")
     time.sleep(2)
-    if not valid_time_checking():
-        return
+    # if not valid_time_checking():
+    #     return
     for opt in opt_list:
         if opt == 'all':
             for j in range(len(course_array)):

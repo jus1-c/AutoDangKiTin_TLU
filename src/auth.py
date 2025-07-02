@@ -67,9 +67,12 @@ def get_user_info(cookies, headers):
     student_id = json.loads(r.text)['id']
     r2 = httpx.get(semester_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
     semester_id = json.loads(r2.text)['semesterRegisterPeriods'][0]['id']
+    semester_summer_id = json.loads(r2.text)['semesterRegisterPeriods'][6]['id']
     course_url = f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/findByPeriod/{student_id}/{semester_id}"
     register_url = f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/add-register/{student_id}/{semester_id}"
+    course_summer_url = f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/findByPeriod/{student_id}/{semester_summer_id}"
+    register_summer_url = f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/add-register/{student_id}/{semester_summer_id}"
     schedule_url = f"https://sinhvien1.tlu.edu.vn/education/api/StudentCourseSubject/studentLoginUser/{json.loads(r2.text)['id']}"
     with open("res/user_info.json", "w") as outfile:
         json.dump({"course_url": course_url, "register_url": register_url, "schedule_url": schedule_url}, outfile)
-    return name, student_id, course_url, register_url, schedule_url
+    return name, student_id, course_url, course_summer_url, register_url, register_summer_url, schedule_url

@@ -7,16 +7,16 @@ from src.ui import clear
 
 global_timeout = 30
 
-def get_course_list(course_url, cookies, headers):
+def get_course_list(course_url, cookies, headers, name):
     try:
         r = httpx.get(course_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
         print("Lấy dữ liệu thành công")
-        with open("res/all_course.json", "w", encoding="utf-8") as f:
+        with open("res/" + name, "w", encoding="utf-8") as f:
             f.write(r.text)
         time.sleep(1)
         clear()
     except:
-        if os.path.exists("res/all_course.json"):
+        if os.path.exists("res/" + name):
             print("Không thể kết nối đến máy chủ, script sẽ sử dụng dữ liệu từ lần chạy trước")
             time.sleep(1)
         else:
@@ -24,11 +24,11 @@ def get_course_list(course_url, cookies, headers):
             time.sleep(5)
             sys.exit()
 
-def make_course_array(course_url, cookies, headers):
+def make_course_array(course_url, cookies, headers, name):
     course_array = []
     course_name_array = []
-    get_course_list(course_url, cookies, headers)
-    with open('res/all_course.json', encoding="utf8") as f:
+    get_course_list(course_url, cookies, headers, name)
+    with open('res/' + name, encoding="utf8") as f:
         course_list = json.load(f)
     course_length = len(course_list['courseRegisterViewObject']['listSubjectRegistrationDtos'])
     for i in range(course_length):

@@ -12,14 +12,30 @@ def menu(name, student_id, offline_mode=False):
     clear()
     if offline_mode:
         print("---OFFLINE MODE---")
-        print("\n1. Tự động đăng kí tín chỉ\n2. Đăng xuất\n0. Thoát")
+        print("1. Tự động đăng kí tín chỉ")
+        print("2. Đăng xuất")
+        print("0. Thoát")
     else:
-        print(f"Xin chào, {name}\nID của bạn: {student_id}\n\n1. Tự động đăng kí tín chỉ\n2. Đồng bộ lịch của bạn với google\n3. Đăng xuất\n0. Thoát")
+        print(f"Xin chào, {name}")
+        print(f"ID của bạn: {student_id}")
+        print("\n1. Tự động đăng kí tín chỉ")
+        print("2. Đồng bộ lịch của bạn với Google")
+        print("3. Đăng xuất")
+        print("0. Thoát")
+    return input("\nLựa chọn: ")
+
+def register_menu():
+    clear()
+    print("1. Học kì chính")
+    print("2. Học kì hè")
     return input("\nLựa chọn: ")
 
 def schedule_menu(schedule_arr):
     clear()
-    print("Lựa chọn đồng bộ:\n1. Đồng bộ tất cả khoá học\n2. Đăng xuất tài khoản google\n0. Trở về menu")
+    print("Lựa chọn đồng bộ:")
+    print("1. Đồng bộ tất cả khoá học")
+    print("2. Đăng xuất tài khoản Google")
+    print("0. Trở về menu")
     return input("\nLựa chọn: ")
 
 def internet_check():

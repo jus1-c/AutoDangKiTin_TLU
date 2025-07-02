@@ -6,7 +6,7 @@ from src.auth import internet_connection, login, get_user_info
 from src.course import make_course_array
 from src.register import auto_register
 from src.calendar_sync import make_token, send_schedule, rm_and_insert_new_schedule
-from src.ui import clear, menu, internet_check, schedule_menu as ui_schedule_menu
+from src.ui import clear, menu, register_menu, internet_check, schedule_menu as ui_schedule_menu
 
 def ensure_folder_exists(folder_path):
     if not os.path.exists(folder_path):
@@ -25,14 +25,20 @@ def main():
     username = input("Username: ") if not os.path.exists("res/login.json") else json.load(open("res/login.json"))["username"]
     password = input("Password: ") if not os.path.exists("res/login.json") else json.load(open("res/login.json"))["password"]
     cookies, headers = login(username, password)
-    name, student_id, course_url, register_url, schedule_url = get_user_info(cookies, headers)
+    name, student_id, course_url, course_summer_url, register_url, register_summer_url, schedule_url = get_user_info(cookies, headers)
 
     while True:
         option = menu(name, student_id, offline_mode)
         if option == '1':
-            clear()
-            course_array, course_name_array = make_course_array(course_url, cookies, headers)
-            auto_register(course_array, course_name_array, register_url, cookies, headers)
+            sub_opt = register_menu()
+            if sub_opt == '1':
+                clear()
+                course_array, course_name_array = make_course_array(course_url, cookies, headers, name='all_course.json')
+                auto_register(course_array, course_name_array, register_url, cookies, headers)
+            elif sub_opt == '2':
+                clear()
+                course_array, course_name_array = make_course_array(course_summer_url, cookies, headers, name='all_course_summer.json')
+                auto_register(course_array, course_name_array, register_summer_url, cookies, headers)
         elif option == '2' and not offline_mode:
             clear()
             cal, schedule_arr = make_token(schedule_url, cookies, headers)
