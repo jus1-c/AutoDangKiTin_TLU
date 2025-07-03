@@ -97,4 +97,16 @@ def auto_register(course_array, course_name_array, register_url, cookies, header
                 print("\nThành công: " + course_name_array[int(opt)])
             else:
                 print("\nKhông thành công: " + course_name_array[int(opt)])
-    input("\nNhấn phím bất kì để tiếp tục...")
+    # Đoạn code này dùng khi muốn treo spam đến khi được thì thôi
+    # ind = 0
+    # while ind < len(opt_list):
+    #     if auto_send_request(int(opt_list[ind]), course_array, register_url, cookies, headers):
+    #         print("\nThành công: " + course_name_array[int(opt_list[ind])])
+    #         opt_list.pop(ind)
+    #         if(len(opt_list) == 0):
+    #             break
+    #     else:
+    #         print("\nKhông thành công: " + course_name_array[int(opt_list[ind])])
+    #     ind = ind + 1
+    #     if ind >= len(opt_list):
+    #         ind = 0
