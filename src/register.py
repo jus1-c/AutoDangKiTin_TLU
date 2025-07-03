@@ -34,7 +34,7 @@ def valid_time_checking(filename):
 
 def send_request(val, i, register_url, cookies, headers, thread_check):
     try:
-        r = httpx.post(register_url, headers=headers, cookies=cookies, json=val, verify=False, timeout=30)
+        r = httpx.post(register_url, headers=headers, cookies=cookies, json=val, verify=False)
         response = json.loads(r.text)
         if response['status'] == 0:
             print("[" + "Thread " + str(i) + "]", "Debug:", response['message'])
@@ -57,6 +57,8 @@ def auto_send_request(val, course_array, register_url, cookies, headers):
             thread.start()
         while True:
             if 'True' in thread_check:
+                while '' in thread_check:
+                    pass
                 return True
             elif '' not in thread_check:
                 if 'Error' in thread_check:
@@ -66,7 +68,10 @@ def auto_send_request(val, course_array, register_url, cookies, headers):
                             thread = threading.Thread(target=send_request, args=(course_array[val][i], k, register_url, cookies, headers, thread_check))
                             thread.start()
                 else:
-                    return False
+                    if(i == len(course_array[val])):
+                        return False
+                    else:
+                        break
             time.sleep(0.1)
 
 def auto_register(course_array, course_name_array, register_url, cookies, headers, filename):
