@@ -30,7 +30,7 @@ def register_menu():
     print("2. Học kì hè")
     return input("\nLựa chọn: ")
 
-def schedule_menu(schedule_arr):
+def schedule_menu():
     clear()
     print("Lựa chọn đồng bộ:")
     print("1. Đồng bộ tất cả khoá học")

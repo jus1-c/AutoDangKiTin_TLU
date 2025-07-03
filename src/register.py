@@ -6,8 +6,8 @@ from datetime import datetime
 
 thread_count = 20
 
-def valid_time_checking():
-    with open("res/all_course.json", encoding="utf8") as f:
+def valid_time_checking(filename):
+    with open("res/" + filename, encoding="utf8") as f:
         time_get = json.load(f)
     starttime = time_get['courseRegisterViewObject']['startDate']
     endtime = time_get['courseRegisterViewObject']['endDate']
@@ -37,16 +37,16 @@ def send_request(val, i, register_url, cookies, headers, thread_check):
         r = httpx.post(register_url, headers=headers, cookies=cookies, json=val, verify=False, timeout=30)
         response = json.loads(r.text)
         if response['status'] == 0:
-            print("Debug:", response['message'])
+            print("[" + "Thread " + str(i) + "]", "Debug:", response['message'])
             thread_check[i] = 'True'
         elif response['status'] == -9:
-            print(response['message'])
+            print("[" + "Thread " + str(i) + "]", response['message'])
             thread_check[i] = 'Error'
         else:
-            print(response['message'])
+            print("[" + "Thread " + str(i) + "]", response['message'])
             thread_check[i] = 'False'
     except Exception as err:
-        print("Error:", err)
+        print("[" + "Thread " + str(i) + "]", "Exception Error:", err)
         thread_check[i] = 'Error'
 
 def auto_send_request(val, course_array, register_url, cookies, headers):
@@ -69,7 +69,7 @@ def auto_send_request(val, course_array, register_url, cookies, headers):
                     return False
             time.sleep(0.1)
 
-def auto_register(course_array, course_name_array, register_url, cookies, headers):
+def auto_register(course_array, course_name_array, register_url, cookies, headers, filename):
     for i in range(len(course_array)):
         print(i, '.', course_name_array[i], '\n')
     option = input("Chọn môn để đăng kí (nhập 'all' để chọn tất cả)\nBạn có thể nhập nhiều môn 1 lúc bằng dấu cách: ")
@@ -78,7 +78,7 @@ def auto_register(course_array, course_name_array, register_url, cookies, header
     time.sleep(2)
     print("Tips: Chỉ nên chọn những môn thực sự quan trọng vì quá trình đăng kí sẽ rất lâu.\nÀ quên, môn nào nhập trước đăng kí trước nhé :3\n")
     time.sleep(2)
-    if not valid_time_checking():
+    if not valid_time_checking(filename):
         return
     for opt in opt_list:
         if opt == 'all':

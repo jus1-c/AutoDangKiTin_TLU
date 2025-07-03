@@ -25,7 +25,7 @@ def main():
     username = input("Username: ") if not os.path.exists("res/login.json") else json.load(open("res/login.json"))["username"]
     password = input("Password: ") if not os.path.exists("res/login.json") else json.load(open("res/login.json"))["password"]
     cookies, headers = login(username, password)
-    name, student_id, course_url, course_summer_url, register_url, register_summer_url, schedule_url = get_user_info(cookies, headers)
+    name, student_id, course_url, course_summer_url, register_url, register_summer_url, schedule_url = get_user_info(cookies, headers, offline_mode)
 
     while True:
         option = menu(name, student_id, offline_mode)
@@ -33,12 +33,12 @@ def main():
             sub_opt = register_menu()
             if sub_opt == '1':
                 clear()
-                course_array, course_name_array = make_course_array(course_url, cookies, headers, name='all_course.json')
-                auto_register(course_array, course_name_array, register_url, cookies, headers)
+                course_array, course_name_array = make_course_array(course_url, cookies, headers, 'all_course.json')
+                auto_register(course_array, course_name_array, register_url, cookies, headers, 'all_course.json')
             elif sub_opt == '2':
                 clear()
-                course_array, course_name_array = make_course_array(course_summer_url, cookies, headers, name='all_course_summer.json')
-                auto_register(course_array, course_name_array, register_summer_url, cookies, headers)
+                course_array, course_name_array = make_course_array(course_summer_url, cookies, headers, 'all_course_summer.json')
+                auto_register(course_array, course_name_array, register_summer_url, cookies, headers, 'all_course_summer.json')
         elif option == '2' and not offline_mode:
             clear()
             cal, schedule_arr = make_token(schedule_url, cookies, headers)
