@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import json
+import httpx
 from src.auth import internet_connection, login, get_user_info
 from src.course import make_course_array
 from src.register import auto_register
@@ -42,7 +43,7 @@ def main():
         elif option == '2' and not offline_mode:
             clear()
             cal, schedule_arr = make_token(schedule_url, cookies, headers)
-            sub_option = ui_schedule_menu(schedule_arr)
+            sub_option = ui_schedule_menu()
             if sub_option == '0':
                 continue
             elif sub_option == '1':
@@ -73,4 +74,7 @@ def main():
             time.sleep(1)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except httpx.ConnectError:
+        main()
