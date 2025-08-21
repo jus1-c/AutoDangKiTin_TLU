@@ -9,11 +9,14 @@ thread_count = 20
 def valid_time_checking(filename):
     with open("res/" + filename, encoding="utf8") as f:
         time_get = json.load(f)
-    starttime = time_get['courseRegisterViewObject']['startDate']
-    endtime = time_get['courseRegisterViewObject']['endDate']
-    str_starttime = datetime.fromtimestamp(starttime / 1000)
-    str_endtime = datetime.fromtimestamp(endtime / 1000)
-    current_time = datetime.fromtimestamp(int(time.time()))
+    try:
+        starttime = time_get['courseRegisterViewObject']['startDate']
+        endtime = time_get['courseRegisterViewObject']['endDate']
+        str_starttime = datetime.fromtimestamp(starttime / 1000)
+        str_endtime = datetime.fromtimestamp(endtime / 1000)
+        current_time = datetime.fromtimestamp(int(time.time()))
+    except TypeError:
+        return False
     print("Hiện tại:     ", current_time)
     print("Bắt đầu:      ", str_starttime)
     print("Kết thúc:     ", str_endtime, '\n')
