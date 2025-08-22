@@ -264,7 +264,7 @@ def sniffing_mode(course_url, headers, cookies, code):
             try:
                 r = httpx.get(course_url, headers=headers, cookies=cookies, verify=False)
                 break
-            except ConnectionError or TimeoutError as e:
+            except httpx.ConnectError or httpx.ConnectTimeout or httpx.ReadTimeout as e:
                 print("[DEBUG]: Error:", e)
         data = json.loads(r.text)
         for c in code:
