@@ -265,10 +265,10 @@ def sniffing_mode(course_url, headers, cookies, code):
                 r = httpx.get(course_url, headers=headers, cookies=cookies, verify=False)
                 break
             except ConnectionError or TimeoutError as e:
-                print("[DEBUG]:", e)
+                print("[DEBUG]: Error:", e)
         data = json.loads(r.text)
         for c in code:
             course_info = find_course_info(data, c)
-            print("[DEBUG]:", course_info['isFullClass'])
+            print("[DEBUG]:", "class_code:",c,"isFullClass:", course_info['isFullClass'])
             if course_info['isFullClass'] == False:
                 return c
