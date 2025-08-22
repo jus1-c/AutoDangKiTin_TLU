@@ -43,7 +43,9 @@ def custom_json(course_array, course_name_array, file):
                         print(course_array[option][i]['timetables'][j]['start'] + ' - ' + course_array[option][i]['timetables'][j]['end'])
             while(1):
                 try:
-                    opt = input('\nLựa chọn: ')
+                    opt = input('\nLựa chọn (nhập back để quay về bảng chọn): ')
+                    if opt == 'back':
+                        break
                     opt = int(opt) - 1
                     if opt >= 0 and opt <= len(course_array[option]) and opt not in duplicate:
                         tmp_lst.append(course_array[option][opt])
@@ -66,15 +68,15 @@ def custom_json(course_array, course_name_array, file):
     while(1):
         clear()
         filename = input("Nhập tên file muốn đặt: ")
-        if os.path.exists('src/custom/'+ filename):
+        if os.path.exists('res/custom/'+ filename):
             print("Không thể sử dụng tên này!")
         else:
             break
-    with open('src/custom/'+filename+'.json', 'w', encoding='utf8') as f:
+    with open('res/custom/'+filename+'.json', 'w', encoding='utf8') as f:
         f.write(json.dumps(tmp_lst))
     with open("res/" + file, encoding="utf8") as f:
         time_get = json.load(f)
-    with open('src/custom/'+filename+'.json.timer', 'w', encoding='utf8') as f:
+    with open('res/custom/'+filename+'.json.timer', 'w', encoding='utf8') as f:
         timer = {
             'courseRegisterViewObject': {
                 'startDate': time_get['courseRegisterViewObject']['startDate'],
