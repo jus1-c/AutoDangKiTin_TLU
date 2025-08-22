@@ -12,8 +12,12 @@ def valid_time_checking(filename):
         time_get = json.load(f)
     starttime = time_get['courseRegisterViewObject']['startDate']
     endtime = time_get['courseRegisterViewObject']['endDate']
-    str_starttime = datetime.fromtimestamp(starttime / 1000)
-    str_endtime = datetime.fromtimestamp(endtime / 1000)
+    try:
+        str_starttime = datetime.fromtimestamp(starttime / 1000)
+        str_endtime = datetime.fromtimestamp(endtime / 1000)
+    except TypeError:
+        print('Không thể lấy thời gian, không thể thực hiện tự đăng kí')
+        return False
     current_time = datetime.fromtimestamp(int(time.time()))
     print("Hiện tại:     ", current_time)
     print("Bắt đầu:      ", str_starttime)
