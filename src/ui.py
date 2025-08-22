@@ -13,18 +13,31 @@ def menu(name, student_id, offline_mode=False):
     if offline_mode:
         print("---OFFLINE MODE---")
         print("1. Tự động đăng kí tín chỉ")
-        print("2. Đăng xuất")
+        print("2. Custom lịch đăng kí")
+        print("3. Đăng xuất")
         print("0. Thoát")
     else:
         print(f"Xin chào, {name}")
         print(f"ID của bạn: {student_id}")
         print("\n1. Tự động đăng kí tín chỉ")
-        print("2. Đồng bộ lịch của bạn với Google")
-        print("3. Đăng xuất")
+        print("2. Custom lịch đăng kí")
+        print("3. Đồng bộ lịch của bạn với Google")
+        print("4. Đăng xuất")
         print("0. Thoát")
     return input("\nLựa chọn: ")
 
+def custom_reg():
+    clear()
+    print()
+
 def register_menu():
+    clear()
+    print("1. Học kì chính")
+    print("2. Học kì hè")
+    print("3. Dùng lịch custom")
+    return input("\nLựa chọn: ")
+
+def custom_menu():
     clear()
     print("1. Học kì chính")
     print("2. Học kì hè")

@@ -4,9 +4,10 @@ import time
 import json
 from src.auth import internet_connection, login, get_user_info
 from src.course import make_course_array
-from src.register import auto_register
+from src.register import auto_register, send_custom_rq
 from src.calendar_sync import make_token, send_schedule, rm_and_insert_new_schedule
-from src.ui import clear, menu, register_menu, internet_check, schedule_menu as ui_schedule_menu
+from src.ui import clear, custom_menu, menu, register_menu, internet_check, schedule_menu as ui_schedule_menu
+from src.custom_course import custom_json
 
 def ensure_folder_exists(folder_path):
     if not os.path.exists(folder_path):
@@ -14,6 +15,7 @@ def ensure_folder_exists(folder_path):
 
 def main():
     ensure_folder_exists('res/')
+    ensure_folder_exists('res/custom')
     offline_mode = False
     if internet_connection():
         if os.path.exists("res/token.json"):
@@ -38,8 +40,20 @@ def main():
             elif sub_opt == '2':
                 clear()
                 course_array, course_name_array = make_course_array(course_summer_url, cookies, headers, 'all_course_summer.json')
-                auto_register(course_array, course_name_array, register_summer_url, cookies, headers, 'all_course_summer.json')
-        elif option == '2' and not offline_mode:
+                auto_register(course_array, course_name_array, register_url, cookies, headers, 'all_course_summer.json')
+            elif sub_opt == '3':
+                send_custom_rq(register_url, cookies, headers)
+        elif option == '2':
+            sub_opt = custom_menu()
+            if sub_opt == '1':
+                clear()
+                course_array, course_name_array = make_course_array(course_url, cookies, headers, 'all_course.json')
+                custom_json(course_array, course_name_array, 'all_course.json')
+            elif sub_opt == '2':
+                clear()
+                course_array, course_name_array = make_course_array(course_summer_url, cookies, headers, 'all_course_summer.json')
+                custom_json(course_array, course_name_array, 'all_course_summer.json')
+        elif option == '3' and not offline_mode:
             clear()
             cal, schedule_arr = make_token(schedule_url, cookies, headers)
             sub_option = ui_schedule_menu(schedule_arr)
@@ -57,7 +71,7 @@ def main():
                 print("Đăng xuất thành công !")
                 os.remove("res/token_google.json")
                 time.sleep(1)
-        elif option == '3' or (option == '2' and offline_mode):
+        elif option == '4' or (option == '3' and offline_mode):
             try:
                 os.remove("res/login.json")
                 os.remove("res/token.json")

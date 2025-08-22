@@ -2,6 +2,7 @@ import httpx
 import json
 import threading
 import time
+import os
 from datetime import datetime
 
 thread_count = 20
@@ -39,7 +40,7 @@ def send_request(val, i, register_url, cookies, headers, thread_check):
         if response['status'] == 0:
             print("[" + "Thread " + str(i) + "]", "Debug:", response['message'])
             thread_check[i] = 'True'
-        elif response['status'] == -9:
+        elif response['status'] < 0:
             print("[" + "Thread " + str(i) + "]", response['message'])
             thread_check[i] = 'Error'
         else:
@@ -98,3 +99,49 @@ def auto_register(course_array, course_name_array, register_url, cookies, header
             else:
                 print("\nKhông thành công: " + course_name_array[int(opt)])
     input("\nNhấn phím bất kì để tiếp tục...")
+
+def send_custom_rq(register_url, cookies, headers):
+    ls = os.listdir('src/custom')
+    ls = [x for x in ls if "timer" not in x.split('.')]
+    print('Các file custom: ')
+    for i in range(len(ls)):
+        print(i, ls[i])
+    opt = input('\nLựa chọn: ')
+    while(1):
+        try:
+            opt = int(opt)
+            if opt >= 0 and opt < len(ls):
+                filename = ls[opt]
+                break
+            else:
+                print('Đối số không hợp lệ')
+        except ValueError or TypeError:
+            print('Đối số không hợp lệ')
+    if not valid_time_checking(filename+'.timer'):
+        return
+    with open('src/custom/'+filename, 'r', encoding='utf8') as f:
+        custom_array = json.load(f)
+    thread_check = ['' for _ in range(custom_array)]
+    for i in range(len(custom_array)):
+        thread = threading.Thread(target=send_request, args=(custom_array[i], i, register_url, cookies, headers, thread_check))
+        thread.start()
+    while True:
+        if '' not in thread_check:
+            if 'Error' in thread_check:
+                for k in range(len(thread_check)):
+                    if thread_check[k] == 'Error':
+                        thread_check[k] = ''
+                        thread = threading.Thread(target=send_request, args=(custom_array[i], k, register_url, cookies, headers, thread_check))
+                        thread.start()
+            else:
+                true_lst = []
+                false_lst = []
+                for i in range(len(custom_array)):
+                    if thread_check[i] == 'True':
+                        true_lst.append(custom_array[i]['displayName'])
+                    else:
+                        false_lst.append(custom_array[i]['displayName'])
+                    print("Thành Công:", ", ".join(true_lst))
+                    print("Thất bại:", ", ".join(false_lst))
+                    break
+        input("\nNhấn phím bất kì để tiếp tục...")
