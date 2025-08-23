@@ -218,26 +218,18 @@ def send_custom_rq(register_url, course_url, cookies, headers):
                 break
 
     opt_2 = input("\nBạn có muốn kích hoạt sniffing mode cho những môn đăng kí không thành công không [Y/n]?")
-    code_false_lst = []
-    registed_code_lst = []
     while(1):
         if opt_2 == 'Y' or opt_2 == 'y':
-            code_lst = diff(code_lst, code_false_lst)
-            while(1):
+            if len(code_lst) == 0:
+                break
+            for i in range(len(code_lst)):
                 code = sniffing_mode(course_url, headers, cookies, code_lst)
                 idx = find_index_by_code_custom(custom_array, code)
                 if sniff_send_rq_custom(custom_array[idx], register_url, cookies, headers):
                     print("Đăng kí thành công mã môn học", code)
-                    if code not in registed_code_lst:
-                        registed_code_lst.append(code)
-                    if len(registed_code_lst) == len(code_lst):
-                        break
                 else:
                     print("Đăng kí không thành công mã môn học", code)
-                    if code not in code_false_lst:
-                        code_false_lst.append(code)
-            if len(registed_code_lst) == len(code_lst):
-                break
+                code_lst.pop(i)
         elif opt_2 == 'N' or opt_2 == 'n':
             break
         else:
