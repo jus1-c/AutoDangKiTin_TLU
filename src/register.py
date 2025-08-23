@@ -45,7 +45,10 @@ def send_request(val, i, register_url, cookies, headers, thread_check):
         if response['status'] == 0:
             print("[" + "Thread " + str(i) + "]", 'status_code:', response['status'], "Debug:", response['message'])
             thread_check[i] = 'True'
-        elif response['status'] == -6:
+        elif response['status'] == -6:  # Full slot
+            print("[" + "Thread " + str(i) + "]", 'status_code:', response['status'], response['message'])
+            thread_check[i] = 'False'
+        elif response['status'] == -2:  # Trùng lịch
             print("[" + "Thread " + str(i) + "]", 'status_code:', response['status'], response['message'])
             thread_check[i] = 'False'
         else:
@@ -147,6 +150,8 @@ def auto_register(course_array, course_name_array, register_url, cookies, header
     while(1):
         if opt_2 == 'Y' or opt_2 == 'y':
             code_lst = []
+            if len(fail_opt) == 0:
+                break
             for i in range(len(fail_opt)):
                 for j in range(len(course_array[fail_opt[i]])):
                     code_lst.append(course_array[fail_opt[i]][j]['code'])
@@ -156,6 +161,7 @@ def auto_register(course_array, course_name_array, register_url, cookies, header
                     print("Đăng kí thành công mã môn học", code)
                 else:
                     print("Đăng kí không thành công mã môn học", code)
+                fail_opt.pop(i)
                 break
         elif opt_2 == 'N' or opt_2 == 'n':
             break
@@ -212,22 +218,31 @@ def send_custom_rq(register_url, course_url, cookies, headers):
                 break
 
     opt_2 = input("\nBạn có muốn kích hoạt sniffing mode cho những môn đăng kí không thành công không [Y/n]?")
+    code_false_lst = []
+    registed_code_lst = []
     while(1):
         if opt_2 == 'Y' or opt_2 == 'y':
-            for i in range(len(code_lst)):
+            code_lst = diff(code_lst, code_false_lst)
+            while(1):
                 code = sniffing_mode(course_url, headers, cookies, code_lst)
                 idx = find_index_by_code_custom(custom_array, code)
                 if sniff_send_rq_custom(custom_array[idx], register_url, cookies, headers):
                     print("Đăng kí thành công mã môn học", code)
+                    if code not in registed_code_lst:
+                        registed_code_lst.append(code)
+                    if len(registed_code_lst) == len(code_lst):
+                        break
                 else:
                     print("Đăng kí không thành công mã môn học", code)
+                    if code not in code_false_lst:
+                        code_false_lst.append(code)
+            if len(registed_code_lst) == len(code_lst):
                 break
         elif opt_2 == 'N' or opt_2 == 'n':
             break
         else:
             print("Đối số không hợp lệ")
-
-        input("\nNhấn phím bất kì để tiếp tục...")
+    input("\nNhấn phím bất kì để tiếp tục...")
 
 def find_index_by_code(course_array, target_code):
     for i, sublist in enumerate(course_array):      # i: index môn
@@ -241,6 +256,12 @@ def find_index_by_code_custom(courses, code):
         if course.get("code") == code:
             return i
     return -1
+
+def diff(list1, list2):
+  set1 = set(list1)
+  set2 = set(list2)
+  different_values = set1.symmetric_difference(set2)
+  return list(different_values)
 
 def find_course_info(data, target_code):
     # Đi vào courseRegisterViewObject -> listSubjectRegistrationDtos -> courseSubjectDtos
