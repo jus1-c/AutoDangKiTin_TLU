@@ -249,12 +249,6 @@ def find_index_by_code_custom(courses, code):
             return i
     return -1
 
-def diff(list1, list2):
-  set1 = set(list1)
-  set2 = set(list2)
-  different_values = set1.symmetric_difference(set2)
-  return list(different_values)
-
 def find_course_info(data, target_code):
     # Đi vào courseRegisterViewObject -> listSubjectRegistrationDtos -> courseSubjectDtos
     crvo = data.get("courseRegisterViewObject", {})
