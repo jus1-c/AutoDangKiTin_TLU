@@ -73,10 +73,17 @@ def get_user_info(cookies, headers, offline_mode):
         schedule_url = data["schedule_url"]
         return name, student_id, course_url, course_summer_url, register_url, register_summer_url, schedule_url
     else:
-        r = httpx.get(info_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
+        while(1):
+            try:
+                r = httpx.get(info_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
+                r2 = httpx.get(semester_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
+                break
+            except Exception as e:
+                print("Có lỗi không mong muốn xảy ra:", e)
+                print("Đang thử lại...")
+                time.sleep(0.5)
         name = json.loads(r.text)['displayName']
         student_id = json.loads(r.text)['id']
-        r2 = httpx.get(semester_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
         semester_id = json.loads(r2.text)['semesterRegisterPeriods'][0]['id']
         semester_summer_id = json.loads(r2.text)['semesterRegisterPeriods'][6]['id']
         course_url = f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/findByPeriod/{student_id}/{semester_id}"
