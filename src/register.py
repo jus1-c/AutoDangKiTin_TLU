@@ -148,11 +148,9 @@ def auto_register(course_array, course_name_array, register_url, cookies, header
                 print("\nKhông thành công: " + course_name_array[int(opt)])
     if fail_opt != []:
         opt_2 = input("Bạn có muốn kích hoạt sniffing mode cho những môn đăng kí không thành công không [Y/n]?")
-        while(1):
+        while len(fail_opt) == 0:
             if opt_2 == 'Y' or opt_2 == 'y':
                 code_lst = []
-                if len(fail_opt) == 0:
-                    break
                 for i in range(len(fail_opt)):
                     for j in range(len(course_array[fail_opt[i]])):
                         code_lst.append(course_array[fail_opt[i]][j]['code'])
@@ -242,7 +240,7 @@ def send_custom_rq(register_url, course_url, cookies, headers):
     print("Thất bại:", ", ".join(false_lst))
     if false_lst != []:
         opt_2 = input("\nBạn có muốn kích hoạt sniffing mode cho những môn đăng kí không thành công không [Y/n]?")
-        while(1):
+        while code_lst == []:
             if opt_2 == 'Y' or opt_2 == 'y':
                 for i in range(len(code_lst)):
                     code = sniffing_mode(course_url, headers, cookies, code_lst)
@@ -252,6 +250,7 @@ def send_custom_rq(register_url, course_url, cookies, headers):
                     else:
                         print("Đăng kí không thành công mã môn học", code)
                     code_lst.pop(i)
+                    break
             elif opt_2 == 'N' or opt_2 == 'n':
                 break
             else:
