@@ -27,7 +27,11 @@ def main():
     
     username = input("Username: ") if not os.path.exists("res/login.json") else json.load(open("res/login.json"))["username"]
     password = input("Password: ") if not os.path.exists("res/login.json") else json.load(open("res/login.json"))["password"]
-    cookies, headers = login(username, password)
+    if offline_mode:
+        cookies = json.load(open("res/token.json"))["token"]
+        headers = json.load(open("res/token.json"))["Authorization"]
+    else:
+        cookies, headers = login(username, password)
     name, student_id, course_url, course_summer_url, register_url, register_summer_url, schedule_url = get_user_info(cookies, headers, offline_mode)
 
     while True:

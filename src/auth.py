@@ -13,7 +13,9 @@ global_timeout = 30
 
 def internet_connection():
     try:
-        httpx.get(login_url, timeout=global_timeout, verify=False)
+        r = httpx.get(login_url, timeout=global_timeout, verify=False)
+        if r.status_code > 399:
+            raise Exception
         return 0
     except:
         return 1
@@ -24,7 +26,7 @@ def login_check(r):
             print("Tài khoản hoặc mật khẩu không đúng !\n")
             time.sleep(1)
             return False
-        elif '502 Bad Gateway' in r.text:
+        elif r.status_code == 502:
             print("Lỗi 502, vui lòng thử lại sau")
             sys.exit()
         else:
@@ -45,13 +47,23 @@ def login(username, password):
             token = json.load(f)
         cookies = {"token": token['token']}
         headers = {"Authorization": token['Authorization']}
-        r = httpx.get(info_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
+        while(1):
+            try:
+                r = httpx.get(info_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
+                break
+            except Exception as e:
+                print("Có lỗi không mong muốn xảy ra:", e, "\nĐang thử lại...\r")
         if "error" not in r.text:
             print("Đang đăng nhập tự động bằng token...")
             time.sleep(1)
             return cookies, headers
     login_data = {"client_id": "education_client", "grant_type": "password", "username": username, "password": password, "client_secret": "password"}
-    r = httpx.post(login_url, data=login_data, timeout=global_timeout, verify=False)
+    while(1):
+        try:
+            r = httpx.post(login_url, data=login_data, timeout=global_timeout, verify=False)
+            break
+        except Exception as e:
+            print("Có lỗi không mong muốn xảy ra:", e, "\nĐang thử lại...\r")
     if login_check(r):
         cookies = {"token": urllib.parse.quote_plus(r.text)}
         headers = {"Authorization": "Bearer " + json.loads(r.text)['access_token']}
@@ -79,9 +91,7 @@ def get_user_info(cookies, headers, offline_mode):
                 r2 = httpx.get(semester_url, headers=headers, cookies=cookies, timeout=global_timeout, verify=False)
                 break
             except Exception as e:
-                print("Có lỗi không mong muốn xảy ra:", e)
-                print("Đang thử lại...")
-                time.sleep(0.5)
+                print("Có lỗi không mong muốn xảy ra:", e, "\nĐang thử lại...\r")
         name = json.loads(r.text)['displayName']
         student_id = json.loads(r.text)['id']
         semester_id = json.loads(r2.text)['semesterRegisterPeriods'][0]['id']

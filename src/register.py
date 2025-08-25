@@ -170,8 +170,32 @@ def auto_register(course_array, course_name_array, register_url, cookies, header
                 print("Đối số không hợp lệ")
     input("\nNhấn phím bất kì để tiếp tục...")
 
+def auto_send_custom_rq(custom_array, register_url, cookies, headers, name, result,  code):
+    thread_check = ['' for _ in range(len(thread_count))]
+    for i in range(len(thread_count)):
+        thread = threading.Thread(target=send_request, args=(custom_array, i, register_url, cookies, headers, thread_check))
+        thread.start()
+    while True:
+        if '' not in thread_check:
+            if 'Error' in thread_check:
+                for k in range(len(thread_check)):
+                    if thread_check[k] == 'Error':
+                        thread_check[k] = ''
+                        thread = threading.Thread(target=send_request, args=(custom_array, k, register_url, cookies, headers, thread_check))
+                        thread.start()
+            else:
+                if thread_check[i] == 'True':
+                    while '' in thread_check:
+                        pass
+                    result = True
+                    break
+                else:
+                    result = False
+                    code = custom_array['code']
+                    break
+    name = custom_array['displayName']
+
 def send_custom_rq(register_url, course_url, cookies, headers):
-    code_lst = []
     ls = os.listdir('res/custom')
     ls = [x for x in ls if "timer" not in x.split('.')]
     clear()
@@ -193,36 +217,33 @@ def send_custom_rq(register_url, course_url, cookies, headers):
         return
     with open('res/custom/'+filename, 'r', encoding='utf8') as f:
         custom_array = json.load(f)
-    thread_check = ['' for _ in range(len(custom_array))]
+    name = ['' for _ in range(len(custom_array))]
+    result = ['' for _ in range(len(custom_array))]
+    code_lst = ['' for _ in range(len(custom_array))]
     for i in range(len(custom_array)):
-        thread = threading.Thread(target=send_request, args=(custom_array[i], i, register_url, cookies, headers, thread_check))
+        thread = threading.Thread(target=auto_send_custom_rq, args=(custom_array[i], register_url, cookies, headers, name[i], result[i], code_lst[i]))
         thread.start()
-    while True:
-        if '' not in thread_check:
-            if 'Error' in thread_check:
-                for k in range(len(thread_check)):
-                    if thread_check[k] == 'Error':
-                        thread_check[k] = ''
-                        thread = threading.Thread(target=send_request, args=(custom_array[i], k, register_url, cookies, headers, thread_check))
-                        thread.start()
-            else:
-                true_lst = []
-                false_lst = []
-                for i in range(len(custom_array)):
-                    if thread_check[i] == 'True':
-                        true_lst.append(custom_array[i]['displayName'])
-                    else:
-                        false_lst.append(custom_array[i]['displayName'])
-                        code_lst.append(custom_array[i]['code'])
-                print("Thành Công:", ", ".join(true_lst))
-                print("Thất bại:", ", ".join(false_lst))
+    while '' in result:
+        pass
+    while(1):
+        for i in range(len(code_lst)):
+            if code_lst[i] == '':
+                code_lst.pop(i)
                 break
+        break
+    true_lst = []
+    false_lst = []
+    for i in range(len(result)):
+        if result[i] == True:
+            true_lst.append(name[i])
+        else:
+            false_lst.append(name[i])
+    print("Thành Công:", ", ".join(true_lst))
+    print("Thất bại:", ", ".join(false_lst))
     if false_lst != []:
         opt_2 = input("\nBạn có muốn kích hoạt sniffing mode cho những môn đăng kí không thành công không [Y/n]?")
         while(1):
             if opt_2 == 'Y' or opt_2 == 'y':
-                if len(code_lst) == 0:
-                    break
                 for i in range(len(code_lst)):
                     code = sniffing_mode(course_url, headers, cookies, code_lst)
                     idx = find_index_by_code_custom(custom_array, code)
