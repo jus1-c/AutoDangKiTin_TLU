@@ -41,9 +41,13 @@ def main():
             elif sub_opt == '2':
                 clear()
                 course_array, course_name_array = make_course_array(course_summer_url, cookies, headers, 'all_course_summer.json')
-                auto_register(course_array, course_name_array, register_url, cookies, headers, 'all_course_summer.json', course_url)
+                auto_register(course_array, course_name_array, register_summer_url, cookies, headers, 'all_course_summer.json', course_url)
             elif sub_opt == '3':
-                send_custom_rq(register_url, course_url, cookies, headers)
+                sub_opt_1 = custom_menu()
+                if sub_opt_1 == '1':
+                    send_custom_rq(register_url, course_url, cookies, headers)
+                elif sub_opt_1 == '2':
+                    send_custom_rq(register_summer_url, course_url, cookies, headers)
         elif option == '2':
             sub_opt = custom_menu()
             if sub_opt == '1':

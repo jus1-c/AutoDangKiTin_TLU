@@ -26,10 +26,6 @@ def menu(name, student_id, offline_mode=False):
         print("0. Thoát")
     return input("\nLựa chọn: ")
 
-def custom_reg():
-    clear()
-    print()
-
 def register_menu():
     clear()
     print("1. Học kì chính")
