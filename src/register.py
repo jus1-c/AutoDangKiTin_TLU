@@ -146,27 +146,28 @@ def auto_register(course_array, course_name_array, register_url, cookies, header
             else:
                 fail_opt.append(int(opt))
                 print("\nKhông thành công: " + course_name_array[int(opt)])
-    opt_2 = input("Bạn có muốn kích hoạt sniffing mode cho những môn đăng kí không thành công không [Y/n]?")
-    while(1):
-        if opt_2 == 'Y' or opt_2 == 'y':
-            code_lst = []
-            if len(fail_opt) == 0:
+    if fail_opt != []:
+        opt_2 = input("Bạn có muốn kích hoạt sniffing mode cho những môn đăng kí không thành công không [Y/n]?")
+        while(1):
+            if opt_2 == 'Y' or opt_2 == 'y':
+                code_lst = []
+                if len(fail_opt) == 0:
+                    break
+                for i in range(len(fail_opt)):
+                    for j in range(len(course_array[fail_opt[i]])):
+                        code_lst.append(course_array[fail_opt[i]][j]['code'])
+                    code = sniffing_mode(course_url, headers, cookies, code_lst)
+                    idx_i, idx_j = find_index_by_code(course_array, code)
+                    if sniff_send_rq(idx_i, idx_j, course_array, register_url, cookies, headers):
+                        print("Đăng kí thành công mã môn học", code)
+                    else:
+                        print("Đăng kí không thành công mã môn học", code)
+                    fail_opt.pop(i)
+                    break
+            elif opt_2 == 'N' or opt_2 == 'n':
                 break
-            for i in range(len(fail_opt)):
-                for j in range(len(course_array[fail_opt[i]])):
-                    code_lst.append(course_array[fail_opt[i]][j]['code'])
-                code = sniffing_mode(course_url, headers, cookies, code_lst)
-                idx_i, idx_j = find_index_by_code(course_array, code)
-                if sniff_send_rq(idx_i, idx_j, course_array, register_url, cookies, headers):
-                    print("Đăng kí thành công mã môn học", code)
-                else:
-                    print("Đăng kí không thành công mã môn học", code)
-                fail_opt.pop(i)
-                break
-        elif opt_2 == 'N' or opt_2 == 'n':
-            break
-        else:
-            print("Đối số không hợp lệ")
+            else:
+                print("Đối số không hợp lệ")
     input("\nNhấn phím bất kì để tiếp tục...")
 
 def send_custom_rq(register_url, course_url, cookies, headers):
@@ -216,24 +217,24 @@ def send_custom_rq(register_url, course_url, cookies, headers):
                 print("Thành Công:", ", ".join(true_lst))
                 print("Thất bại:", ", ".join(false_lst))
                 break
-
-    opt_2 = input("\nBạn có muốn kích hoạt sniffing mode cho những môn đăng kí không thành công không [Y/n]?")
-    while(1):
-        if opt_2 == 'Y' or opt_2 == 'y':
-            if len(code_lst) == 0:
+    if false_lst != []:
+        opt_2 = input("\nBạn có muốn kích hoạt sniffing mode cho những môn đăng kí không thành công không [Y/n]?")
+        while(1):
+            if opt_2 == 'Y' or opt_2 == 'y':
+                if len(code_lst) == 0:
+                    break
+                for i in range(len(code_lst)):
+                    code = sniffing_mode(course_url, headers, cookies, code_lst)
+                    idx = find_index_by_code_custom(custom_array, code)
+                    if sniff_send_rq_custom(custom_array[idx], register_url, cookies, headers):
+                        print("Đăng kí thành công mã môn học", code)
+                    else:
+                        print("Đăng kí không thành công mã môn học", code)
+                    code_lst.pop(i)
+            elif opt_2 == 'N' or opt_2 == 'n':
                 break
-            for i in range(len(code_lst)):
-                code = sniffing_mode(course_url, headers, cookies, code_lst)
-                idx = find_index_by_code_custom(custom_array, code)
-                if sniff_send_rq_custom(custom_array[idx], register_url, cookies, headers):
-                    print("Đăng kí thành công mã môn học", code)
-                else:
-                    print("Đăng kí không thành công mã môn học", code)
-                code_lst.pop(i)
-        elif opt_2 == 'N' or opt_2 == 'n':
-            break
-        else:
-            print("Đối số không hợp lệ")
+            else:
+                print("Đối số không hợp lệ")
     input("\nNhấn phím bất kì để tiếp tục...")
 
 def find_index_by_code(course_array, target_code):
@@ -270,10 +271,10 @@ def sniffing_mode(course_url, headers, cookies, code):
         while(1):
             try:
                 r = httpx.get(course_url, headers=headers, cookies=cookies, verify=False)
+                data = json.loads(r.text)
                 break
             except Exception as e:
                 print("[DEBUG]: Error:", e)
-        data = json.loads(r.text)
         for c in code:
             course_info = find_course_info(data, c)
             print("[DEBUG]:", "class_code:",c,"isFullClass:", course_info['isFullClass'])
