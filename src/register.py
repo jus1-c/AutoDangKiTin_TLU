@@ -169,8 +169,8 @@ def auto_register(course_array, course_name_array, register_url, cookies, header
     input("\nNhấn phím bất kì để tiếp tục...")
 
 def auto_send_custom_rq(custom_array, register_url, cookies, headers, name, result,  code):
-    thread_check = ['' for _ in range(len(thread_count))]
-    for i in range(len(thread_count)):
+    thread_check = ['' for _ in range(thread_count)]
+    for i in range(thread_count):
         thread = threading.Thread(target=send_request, args=(custom_array, i, register_url, cookies, headers, thread_check))
         thread.start()
     while True:
