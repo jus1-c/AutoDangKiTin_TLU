@@ -48,12 +48,13 @@ def schedule_menu():
     return input("\nLựa chọn: ")
 
 def internet_check():
-    option = input("Kết nối không ổn định, có muốn chuyển sang offline mode sử dụng token trước đó ?[Y/n]")
-    if option.lower() == 'y':
-        return True
-    elif option.lower() == 'n':
-        return False
-    else:
-        print("Đối số không hợp lệ, script đang thoát...")
-        time.sleep(1)
-        sys.exit()
+    while(1):
+        #clear()
+        option = input("Kết nối không ổn định, có muốn chuyển sang offline mode sử dụng token trước đó ?[Y/n]")
+        if option.lower() == 'y':
+            return True
+        elif option.lower() == 'n':
+            sys.exit()
+        else:
+            print("Đối số không hợp lệ!")
+            time.sleep(1)

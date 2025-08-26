@@ -25,6 +25,7 @@ def main():
             print("Kết nối không ổn định và không có dữ liệu từ lần chạy trước, vui lòng thử lại sau")
             sys.exit()
     
+    
     username = input("Username: ") if not os.path.exists("res/login.json") else json.load(open("res/login.json"))["username"]
     password = input("Password: ") if not os.path.exists("res/login.json") else json.load(open("res/login.json"))["password"]
     if offline_mode:
