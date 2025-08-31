@@ -15,7 +15,7 @@ def internet_connection():
     try:
         r = httpx.get(login_url, timeout=global_timeout, verify=False)
         print(r)
-        if r.status_code > 399:
+        if r.status_code > 399 and not 401:
             raise Exception
         return 0
     except Exception as e:
