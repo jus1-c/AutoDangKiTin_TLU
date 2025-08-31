@@ -8,7 +8,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.exceptions import RefreshError
 
-calendar_url = "https://www.googleapis.com/auth/calendar"
+calendar_url = ["https://www.googleapis.com/auth/calendar"]
 calendar_name = "TLU Schedule"
 
 def make_token(schedule_url, cookies, headers):
