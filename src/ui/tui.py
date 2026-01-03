@@ -1,11 +1,16 @@
 import sys
 import os
-import tty
-import termios
 import time
 from typing import List, Optional, Dict, Tuple
 from src.models.course import Course
 from src.services.custom_service import CustomService
+
+# Handle platform specific imports
+if sys.platform == 'win32':
+    import msvcrt
+else:
+    import tty
+    import termios
 
 # ANSI Colors
 class Colors:
@@ -23,35 +28,56 @@ class Colors:
 class TUI:
     def __init__(self):
         self.width = 80
+        # Enable ANSI colors on Windows 10+
+        if sys.platform == 'win32':
+            os.system('') 
         
     def clear(self):
         os.system('cls' if os.name == 'nt' else 'clear')
 
     def get_key(self):
-        """Reads a single keypress."""
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            tty.setraw(sys.stdin.fileno())
-            ch = sys.stdin.read(1)
-            if ch == '\x1b': 
-                ch2 = sys.stdin.read(1)
-                if ch2 == '[':
-                    ch3 = sys.stdin.read(1)
-                    if ch3 == 'A': return 'UP'
-                    if ch3 == 'B': return 'DOWN'
-                    if ch3 == 'C': return 'RIGHT'
-                    if ch3 == 'D': return 'LEFT'
-            if ch == '\r' or ch == '\n': return 'ENTER'
-            if ch == ' ': return 'SPACE'
-            if ch == '\x03': return 'CTRL_C' 
-            return ch
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        """Reads a single keypress (Cross-platform)."""
+        if sys.platform == 'win32':
+            # Windows Implementation
+            key = msvcrt.getch()
+            if key == b'\xe0': # Special keys (arrows)
+                key = msvcrt.getch()
+                if key == b'H': return 'UP'
+                if key == b'P': return 'DOWN'
+                if key == b'M': return 'RIGHT'
+                if key == b'K': return 'LEFT'
+            elif key == b'\r': return 'ENTER'
+            elif key == b' ':
+                return 'SPACE'
+            elif key == b'\x03': return 'CTRL_C'
+            elif key == b'\x1b': return '\x1b' # Esc
+            return key.decode('utf-8', errors='ignore')
+        else:
+            # Unix Implementation
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setraw(sys.stdin.fileno())
+                ch = sys.stdin.read(1)
+                if ch == '\x1b': 
+                    ch2 = sys.stdin.read(1)
+                    if ch2 == '[':
+                        ch3 = sys.stdin.read(1)
+                        if ch3 == 'A': return 'UP'
+                        if ch3 == 'B': return 'DOWN'
+                        if ch3 == 'C': return 'RIGHT'
+                        if ch3 == 'D': return 'LEFT'
+                if ch == '\r' or ch == '\n': return 'ENTER'
+                if ch == ' ':
+                    return 'SPACE'
+                if ch == '\x03': return 'CTRL_C' 
+                return ch
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
     def print_center(self, text, color=Colors.WHITE):
         padding = (self.width - len(text)) // 2
-        print(f"{' ' * padding}{color}{text}{Colors.RESET}")
+        print(f"{ ' ' * padding}{color}{text}{Colors.RESET}")
 
     def menu_screen(self, title: str, options: List[str]) -> int:
         selected_idx = 0
@@ -202,11 +228,9 @@ class TUI:
                     # Gather OTHER selected courses to check conflict
                     other_selected_courses = []
                     for i, idx in enumerate(selections):
-                        # Skip if not selected OR if it's the current subject (we are changing it)
                         if idx != -1 and i != current_subj_idx:
                             other_selected_courses.append(all_courses[i][idx])
                     
-                    # Enter Sub-screen
                     chosen_idx = self.course_option_screen(
                         subject_names[current_subj_idx], 
                         all_courses[current_subj_idx], 
@@ -311,4 +335,4 @@ class TUI:
                 else:
                     return current_idx
             elif key == '\x1b': # Esc
-                return None
+                return None 
