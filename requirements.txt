@@ -2,3 +2,6 @@ google_api_python_client==2.157.0
 google_auth_oauthlib==1.2.1
 httpx==0.28.1
 protobuf==6.32.0
+python-dotenv==1.0.0
+tenacity==8.2.3
+readchar==4.0.5
