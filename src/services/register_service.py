@@ -26,11 +26,6 @@ class RegisterService:
             subject_group = all_courses[idx]
             if not subject_group:
                 continue
-            
-            # Try to register ALL options in the group (or just the first ones?)
-            # Legacy logic: Try all options in parallel/burst
-            # Here we just pass the whole group as options for ONE subject slot.
-            
             tasks.append(self.register_single_subject(url, subject_group, failed_courses_to_sniff))
 
         if not tasks:
@@ -82,15 +77,26 @@ class RegisterService:
         return any(results)
 
     async def _send_register_request(self, url: str, data: dict) -> bool:
+        """Sends a single registration request with infinite retry on network failure."""
         async with self.semaphore:
-            try:
-                response = await self.client.request("POST", url, json=data)
-                res_json = response.json()
-                if res_json.get('status') == 0:
-                    return True
-                return False
-            except Exception:
-                return False
+            while True:
+                try:
+                    response = await self.client.request("POST", url, json=data)
+                    
+                    try:
+                        res_json = response.json()
+                        # Return True if Success (0), False if Logic Fail (-x)
+                        return res_json.get('status') == 0
+                    except:
+                        # Json parse error (Server overloaded returning HTML?) -> Retry
+                        continue
+                        
+                except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.WriteTimeout):
+                    # Network error -> Retry immediately
+                    continue
+                except Exception:
+                    # Unknown error -> Retry
+                    continue
 
     async def sniffing_loop(self, user: User, courses: List[Course], is_summer: bool = False):
         print("Bắt đầu chế độ 'săn' (Sniffing mode)... Nhấn Ctrl+C để dừng.")
@@ -110,4 +116,4 @@ class RegisterService:
             except Exception as e:
                 print(f"Sniff error: {e}")
             
-            await asyncio.sleep(2)
+            await asyncio.sleep(2) 

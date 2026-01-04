@@ -1,6 +1,8 @@
 import json
 import os
 import datetime
+import webbrowser
+from ics import Calendar, Event
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -15,21 +17,30 @@ class CalendarService:
     def __init__(self, client: TLUClient):
         self.client = client
 
-    def get_credentials(self):
+    def get_credentials(self, initial_token_json=None, on_token_update=None, open_browser_callback=None):
         creds = None
-        if os.path.exists(Config.GOOGLE_TOKEN_FILE):
-            creds = Credentials.from_authorized_user_file(Config.GOOGLE_TOKEN_FILE, self.SCOPES)
         
+        # 1. Try loading from provided JSON (from Browser LocalStorage)
+        if initial_token_json:
+            try:
+                token_data = json.loads(initial_token_json)
+                creds = Credentials.from_authorized_user_info(token_data, self.SCOPES)
+            except Exception as e:
+                print(f"[DEBUG] Failed to load initial google token: {e}")
+
+        # 2. Validate and Refresh
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 try:
                     creds.refresh(Request())
+                    if on_token_update:
+                        on_token_update(creds.to_json())
                 except Exception:
-                    if os.path.exists(Config.GOOGLE_TOKEN_FILE):
-                        os.remove(Config.GOOGLE_TOKEN_FILE)
-                    return self.get_credentials()
-            else:
-                # Create config from env
+                    # If refresh fails, we need new login
+                    creds = None
+            
+            if not creds:
+                # 3. New Login Flow
                 config = {
                     "installed": {
                         "client_id": Config.GOOGLE_CLIENT_ID,
@@ -42,27 +53,53 @@ class CalendarService:
                     }
                 }
                 flow = InstalledAppFlow.from_client_config(config, self.SCOPES)
-                creds = flow.run_local_server(port=0, open_browser=False)
                 
-            with open(Config.GOOGLE_TOKEN_FILE, "w") as token:
-                token.write(creds.to_json())
+                original_get = webbrowser.get
+                if open_browser_callback:
+                    class MockBrowser:
+                        def open(self, url, new=0, autoraise=True):
+                            open_browser_callback(url)
+                            return True
+                    webbrowser.get = lambda x=None: MockBrowser()
+                
+                try:
+                    creds = flow.run_local_server(
+                        port=0, 
+                        open_browser=True,
+                        authorization_prompt_message="\n=== LINK XÁC THỰC GOOGLE ===\n{url}\n============================\n"
+                    )
+                    # Notify update
+                    if on_token_update:
+                        on_token_update(creds.to_json())
+                finally:
+                    if open_browser_callback:
+                        webbrowser.get = original_get
                 
         return creds
 
-    async def sync_schedule(self, user: User):
-        print("Đang xác thực Google Calendar...")
-        creds = self.get_credentials()
-        service = build('calendar', 'v3', credentials=creds)
-
-        # Fetch schedule from TLU
+    async def get_tlu_events(self, user: User):
+        """Fetches schedule from TLU and parses it into Google Calendar events format."""
         print("Đang tải dữ liệu lịch học từ TLU...")
         res = await self.client.request("GET", user.schedule_url)
         if res.status_code != 200:
-            print("Failed to fetch schedule from TLU")
-            return
+            raise Exception(f"Failed to fetch schedule from TLU: {res.status_code}")
 
         tlu_schedule = res.json()
-        events = self._parse_schedule(tlu_schedule)
+        return self._parse_schedule(tlu_schedule)
+
+    def sync_to_google(self, events, initial_token=None, on_token_update=None, browser_callback=None):
+        """Blocking function to sync events to Google Calendar."""
+        if not events:
+            print("Không có sự kiện nào để đồng bộ.")
+            return
+
+        print("Đang xác thực Google Calendar...")
+        creds = self.get_credentials(
+            initial_token_json=initial_token, 
+            on_token_update=on_token_update, 
+            open_browser_callback=browser_callback
+        )
+        service = build('calendar', 'v3', credentials=creds)
 
         # Create NEW calendar
         current_date_str = datetime.datetime.now().strftime("%d/%m/%Y")
@@ -73,16 +110,33 @@ class CalendarService:
         
         # Insert events
         print(f"Đang đồng bộ {len(events)} sự kiện...")
-        batch = service.new_batch_http_request()
         
         for event in events:
-            # Using batch for better performance (though legacy code was serial)
-            # Batch limit is usually 50-100, but for simplicity let's do serial for now to avoid batch logic complexity
-            # or just do serial printing
             service.events().insert(calendarId=cal_id, body=event).execute()
             print(f"+ Đã thêm: {event['summary']}")
             
         print("Đồng bộ hoàn tất!")
+
+    async def get_ics_content(self, user: User) -> str:
+        """Returns ICS content as string."""
+        events = await self.get_tlu_events(user)
+        c = Calendar()
+        for ev in events:
+            e = Event()
+            e.name = ev['summary']
+            e.description = ev['description']
+            e.begin = ev['start']['dateTime']
+            e.end = ev['end']['dateTime']
+            c.events.add(e)
+        return str(c)
+
+    async def export_ics(self, user: User):
+        """Legacy: Generates ICS file locally (server-side)."""
+        content = await self.get_ics_content(user)
+        filepath = os.path.join(Config.RES_DIR, "schedule.ics")
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return os.path.abspath(filepath)
 
     def _create_new_calendar(self, service, name):
         calendar = {
@@ -93,7 +147,6 @@ class CalendarService:
         return created_calendar['id']
 
     def _week_index_convert(self, x):
-        # 2->0 (Mon), 3->1 ... 8->6 (Sun)
         if x == 8: return 6
         return x - 2
 
@@ -105,13 +158,13 @@ class CalendarService:
                 title = f"[{tt['room']['name']}] {subject['courseSubject']['displayName']}"
                 desc = f"{tt['startHour']['name']} -> {tt['endHour']['name']} || {tt['room']['name']}"
                 
-                start_time_str = tt['startHour']['startString'] # "07:00"
+                start_time_str = tt['startHour']['startString'] 
                 end_time_str = tt['endHour']['endString']
                 
                 start_date_ts = tt['startDate'] / 1000
                 end_date_ts = tt['endDate'] / 1000
                 
-                week_index = tt['weekIndex'] # Day of week (2-8)
+                week_index = tt['weekIndex']
                 day_offset = self._week_index_convert(week_index)
                 
                 current_date = start_date_ts
@@ -134,5 +187,5 @@ class CalendarService:
                         }
                     })
                     
-                    current_date += 7 * 86400 # Next week
+                    current_date += 7 * 86400 
         return events

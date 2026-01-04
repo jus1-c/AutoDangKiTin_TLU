@@ -4,4 +4,5 @@ httpx==0.28.1
 protobuf==6.32.0
 python-dotenv==1.0.0
 tenacity==8.2.3
-readchar==4.0.5
+nicegui==1.4.13
+ics==0.7.2
