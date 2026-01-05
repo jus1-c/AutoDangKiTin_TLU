@@ -1,53 +1,11 @@
-# --- HOTFIX for Python 3.12+ and vbuild/nicegui compatibility ---
-import pkgutil
-import importlib.util
-import sys
-import os
-
-if not hasattr(pkgutil, 'find_loader'):
-    def find_loader(fullname):
-        spec = importlib.util.find_spec(fullname)
-        return spec.loader if spec else None
-    pkgutil.find_loader = find_loader
-
-# --- HOTFIX for pythonnet/pywebview in frozen mode ---
-if getattr(sys, 'frozen', False):
-    # Try to locate python dll
-    dll_name = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
-    base_path = sys._MEIPASS
-    dll_path = os.path.join(base_path, dll_name)
-    
-    if not os.path.exists(dll_path):
-        dll_path = os.path.join(os.path.dirname(sys.executable), dll_name)
-        
-    if os.path.exists(dll_path):
-        os.environ['PYTHONNET_PYDLL'] = dll_path
-# ----------------------------------------------------------------
-
-# Explicitly import webview to ensure PyInstaller bundles it
-try:
-    import webview
-    # Force Edge Chromium (WebView2)
-    os.environ["PYWEBVIEW_GUI"] = "edgechromium"
-    
-    # --- Monkey Patch for pywebview >= 5.0 'frameless' error ---
-    original_create_window = webview.create_window
-    
-    def patched_create_window(*args, **kwargs):
-        if 'frameless' in kwargs:
-            kwargs.pop('frameless')
-        return original_create_window(*args, **kwargs)
-        
-    webview.create_window = patched_create_window
-    # -----------------------------------------------------------
-    
-except ImportError:
-    pass
-
 from nicegui import ui, app, run
 import asyncio
+import sys
 import json
 import logging
+import os
+import subprocess
+import webbrowser
 from datetime import datetime, timedelta
 from typing import List, Set, Dict
 
@@ -61,7 +19,7 @@ from src.services.calendar_service import CalendarService
 from src.models.course import Course
 from src.core.exceptions import LoginError, NetworkError
 
-# --- 1. Stream Redirector ---
+# --- 1. Stream Redirector --- 
 class UILogger(logging.Handler):
     def __init__(self):
         super().__init__()
@@ -124,7 +82,6 @@ def run_gui():
 
         def cleanup_tasks():
             for t in active_tasks: t.cancel()
-            # client.close() explicitly removed
         app.on_disconnect(cleanup_tasks)
 
         async def run_safe(coro):
@@ -363,7 +320,7 @@ def run_gui():
             with ui.tab_panel(tab_custom):
                 ui.label('Quản lý hồ sơ đăng ký (Lưu trên trình duyệt)').classes('text-h6 mb-2')
                 
-                custom_selections = {}
+                custom_selections = {} 
 
                 with ui.splitter(value=30).classes('w-full h-full border rounded') as splitter:
                     
@@ -589,9 +546,6 @@ def run_gui():
                         ui.icon('calendar_today', size='4em').classes('text-blue-500 mx-auto')
                         ui.label('Xuất File .ICS').classes('font-bold text-lg mt-2')
                         async def do_export():
-                            if not user: 
-                                ui.notify('Chưa đăng nhập!', type='warning')
-                                return
                             try:
                                 content = await run_safe(calendar_service.get_ics_content(user))
                                 import datetime
@@ -607,8 +561,9 @@ def run_gui():
                         ui.icon('sync', size='4em').classes('text-green-500 mx-auto')
                         ui.label('Đồng bộ Google Calendar').classes('font-bold text-lg mt-2')
                         async def do_google_sync():
-                            tabs.value = tab_logs
-                            print("\n--- GOOGLE SYNC ---")
+                            tabs.value = tab_logs 
+                            print("\n--- BẮT ĐẦU ĐỒNG BỘ GOOGLE CALENDAR ---")
+                            
                             try:
                                 # 1. Get token from LocalStorage
                                 token_json = await ui.run_javascript("return localStorage.getItem('autotlu_google_token');", timeout=5.0)
@@ -708,17 +663,34 @@ def run_gui():
 
     app.on_shutdown(client.close)
     
-    # Check if running as frozen executable (PyInstaller)
+    # Custom Launcher for App Mode
     is_frozen = getattr(sys, 'frozen', False)
+    port = 8090
+    url = f"http://localhost:{port}"
     
-    ui.run(
-        title='AutoDangKiTin TLU', 
-        port=8090, 
-        reload=False, 
-        favicon='🎓',
-        native=is_frozen,
-        window_size=(1200, 800) # Kích thước cửa sổ mặc định cho Native Mode
-    )
+    def open_app_window():
+        browsers = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+        ]
+        browser_path = None
+        for p in browsers:
+            if os.path.exists(p):
+                browser_path = p
+                break
+        
+        if browser_path:
+            subprocess.Popen([browser_path, f'--app={url}', '--window-size=1200,800'])
+        else:
+            webbrowser.open(url)
+
+    if is_frozen:
+        ui.timer(0.1, open_app_window, once=True)
+        ui.run(title='AutoDangKiTin TLU', port=port, reload=False, favicon='🎓', native=False, show=False)
+    else:
+        ui.run(title='AutoDangKiTin TLU', port=port, reload=False, favicon='🎓', native=False)
 
 if __name__ in {"__main__", "__mp_main__"}:
     run_gui()
