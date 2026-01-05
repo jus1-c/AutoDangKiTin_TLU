@@ -1,11 +1,30 @@
 # --- HOTFIX for Python 3.12+ and vbuild/nicegui compatibility ---
 import pkgutil
 import importlib.util
+import sys
+import os
+
 if not hasattr(pkgutil, 'find_loader'):
     def find_loader(fullname):
         spec = importlib.util.find_spec(fullname)
         return spec.loader if spec else None
     pkgutil.find_loader = find_loader
+
+# --- HOTFIX for pythonnet/pywebview in frozen mode ---
+if getattr(sys, 'frozen', False):
+    # Try to locate python dll
+    # Usually in the same folder as executable or sys._MEIPASS
+    dll_name = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+    # Check sys._MEIPASS first (onefile mode temp dir)
+    base_path = sys._MEIPASS
+    dll_path = os.path.join(base_path, dll_name)
+    
+    if not os.path.exists(dll_path):
+        # Fallback to executable dir
+        dll_path = os.path.join(os.path.dirname(sys.executable), dll_name)
+        
+    if os.path.exists(dll_path):
+        os.environ['PYTHONNET_PYDLL'] = dll_path
 # ----------------------------------------------------------------
 
 # Explicitly import webview to ensure PyInstaller bundles it
