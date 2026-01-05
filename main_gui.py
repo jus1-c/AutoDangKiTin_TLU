@@ -694,7 +694,7 @@ def run_gui():
     
     ui.run(
         title='AutoDangKiTin TLU', 
-        port=8080, 
+        port=8090, 
         reload=False, 
         favicon='🎓',
         native=is_frozen,
