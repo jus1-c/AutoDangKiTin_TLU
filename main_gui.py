@@ -3,7 +3,8 @@ import asyncio
 import sys
 import json
 import logging
-from typing import List
+from datetime import datetime, timedelta
+from typing import List, Set
 from src.config import Config
 from src.core.client import TLUClient
 from src.services.auth_service import AuthService
@@ -13,7 +14,7 @@ from src.services.calendar_service import CalendarService
 from src.models.course import Course
 from src.core.exceptions import LoginError, NetworkError
 
-# --- 1. Stream Redirector --- 
+# --- 1. Stream Redirector ---
 class UILogger(logging.Handler):
     def __init__(self):
         super().__init__()
@@ -71,6 +72,50 @@ def run_gui():
     async def main_page():
         global user, is_summer_sem, courses_cache
         
+        # --- Task Management ---
+        active_tasks: Set[asyncio.Task] = set()
+
+        def cleanup_tasks():
+            if active_tasks:
+                print(f"Client ngắt kết nối. Đang huỷ {len(active_tasks)} tác vụ chạy nền...")
+                for task in active_tasks:
+                    task.cancel()
+                active_tasks.clear()
+
+        app.on_disconnect(cleanup_tasks)
+
+        # Helper for compatibility
+        async def run_safe(coro):
+            task = asyncio.create_task(coro)
+            active_tasks.add(task)
+            task.add_done_callback(active_tasks.discard)
+            try:
+                return await task
+            except asyncio.CancelledError: pass
+            except Exception as e:
+                print(f"[ERROR] {e}")
+                ui.notify(f"Lỗi: {e}", type='negative')
+
+        # --- Timer Logic ---
+        async def wait_until(target_time: datetime, log_func=print):
+            """Waits until target_time, printing countdown."""
+            while True:
+                now = datetime.now()
+                if now >= target_time:
+                    break
+                
+                diff = target_time - now
+                seconds = int(diff.total_seconds())
+                
+                if seconds > 60:
+                    if seconds % 30 == 0: # Log every 30s if far
+                        log_func(f"⏳Còn {seconds} giây nữa...")
+                    await asyncio.sleep(1)
+                else:
+                    log_func(f"⏳ Đếm ngược: {seconds}s")
+                    await asyncio.sleep(1)
+            log_func("🚀 Đã đến giờ! Bắt đầu chạy...")
+
         # --- UI Layout ---
         with ui.header().classes('bg-blue-700 text-white shadow-lg') as header:
             ui.label('AutoDangKiTin TLU (Web GUI)').classes('text-h6 font-bold')
@@ -81,11 +126,11 @@ def run_gui():
         with ui.tabs().classes('w-full shadow-sm sticky top-0 bg-white z-10') as tabs:
             tab_login = ui.tab('Đăng nhập', icon='login')
             tab_register = ui.tab('Đăng ký Nhanh', icon='flash_on')
-            tab_custom = ui.tab('Custom', icon='save')
+            tab_custom = ui.tab('Custom (Local)', icon='save')
             tab_utils = ui.tab('Tiện ích', icon='build')
             tab_logs = ui.tab('Logs', icon='terminal')
 
-        # --- Helper to manage Tab State ---
+        # Helper to manage Tab State
         def update_tabs_state():
             is_logged_in = user is not None
             tab_register.enabled = is_logged_in
@@ -93,12 +138,7 @@ def run_gui():
             tab_utils.enabled = is_logged_in
             tab_logs.enabled = is_logged_in
 
-        # Set initial state
         update_tabs_state()
-
-        # Helper for compatibility
-        async def run_safe(coro):
-            return await coro
 
         with ui.tab_panels(tabs, value=tab_login).classes('w-full p-4'):
             
@@ -164,7 +204,7 @@ def run_gui():
                 if not courses_cache:
                     ui.notify('Đang tải danh sách môn từ server...', type='info')
                     try:
-                        raw_courses, names = await course_service.fetch_courses(user, is_summer_sem)
+                        raw_courses, names = await run_safe(course_service.fetch_courses(user, is_summer_sem))
                         courses_cache = raw_courses
                         update_register_table(raw_courses, names)
                         return True
@@ -212,8 +252,51 @@ def run_gui():
                     rows=[], selection='multiple', row_key='id', pagination=10
                 ).classes('w-full')
 
+                # Helper to open timer dialog
+                def open_timer_dialog(callback):
+                    with ui.dialog() as dialog, ui.card():
+                        ui.label('Chọn thời gian bắt đầu chạy:').classes('text-lg font-bold')
+                        
+                        # Lấy thời gian mặc định từ JSON hoặc hiện tại + 1p
+                        start_ts = course_service.last_meta.get('startDate')
+                        if start_ts:
+                            default_time = datetime.fromtimestamp(start_ts / 1000).strftime('%H:%M')
+                        else:
+                            default_time = (datetime.now() + timedelta(minutes=1)).strftime('%H:%M')
+                            
+                        time_input = ui.input('Giờ:Phút (HH:MM)', value=default_time)
+                        
+                        # Date input (optional, default today)
+                        # ui.date() is a bit complex, let's assume TODAY for simplicity or add later
+                        # For simple usage, Time is usually enough for registration day
+                        
+                        async def start_timer():
+                            try:
+                                t_str = time_input.value
+                                target = datetime.combine(datetime.now().date(), datetime.strptime(t_str, '%H:%M').time())
+                                if target < datetime.now():
+                                    # If time passed today, assume tomorrow? Or warn?
+                                    # Warn better
+                                    if (datetime.now() - target).total_seconds() > 60:
+                                        ui.notify('Thời gian đã qua!', type='warning')
+                                        return
+                                    
+                                dialog.close()
+                                tabs.value = tab_logs
+                                print(f"\n--- HẸN GIỜ CHẠY VÀO LÚC: {target.strftime('%H:%M:%S')} ---")
+                                await wait_until(target)
+                                await callback()
+                                
+                            except ValueError:
+                                ui.notify('Định dạng giờ sai (HH:MM)', type='negative')
+
+                        ui.button('Bắt đầu đếm ngược', on_click=start_timer).classes('w-full bg-indigo-600')
+
+                    dialog.open()
+
                 async def do_register_fast():
                     if not await ensure_courses_loaded(): return
+                    
                     selected = reg_table.selected
                     if not selected:
                         ui.notify('Chưa chọn môn!', type='warning')
@@ -223,22 +306,23 @@ def run_gui():
                     tabs.value = tab_logs
                     print(f"\n--- BẮT ĐẦU ĐĂNG KÝ NHANH ({len(indices)} môn) ---")
                     try:
-                        await register_service.register_subjects(user, indices, courses_cache, is_summer_sem)
+                        await run_safe(register_service.register_subjects(user, indices, courses_cache, is_summer_sem))
                         ui.notify('Hoàn tất. Kiểm tra Logs.', type='positive')
                     except Exception as e:
                         print(f"[ERROR] {e}")
 
-                ui.button('Đăng ký ngay', on_click=do_register_fast).classes('mt-4 bg-green-600')
+                with ui.row():
+                    ui.button('Đăng ký ngay', on_click=do_register_fast).classes('mt-4 bg-green-600')
+                    ui.button('⏳ Hẹn giờ', on_click=lambda: open_timer_dialog(do_register_fast)).classes('mt-4 ml-2 bg-orange-600')
 
-            # ================= TAB: CUSTOM =================
+            # ================= TAB: CUSTOM (LOCAL) =================
             with ui.tab_panel(tab_custom):
-                ui.label('Quản lý hồ sơ đăng ký').classes('text-h6 mb-2')
+                ui.label('Quản lý hồ sơ đăng ký (Lưu trên trình duyệt)').classes('text-h6 mb-2')
                 
-                custom_selections = {}
+                custom_selections = {} 
 
                 with ui.splitter(value=30).classes('w-full h-full border rounded') as splitter:
                     
-                    # --- LEFT: Saved Lists ---
                     with splitter.before:
                         ui.label('Hồ sơ đã lưu').classes('p-2 font-bold bg-gray-100 block')
                         saved_list_container = ui.column().classes('p-2 w-full')
@@ -256,10 +340,8 @@ def run_gui():
                             return items;
                             """
                             keys = await ui.run_javascript(js_code, timeout=5.0)
-                            
                             if not keys:
-                                with saved_list_container:
-                                    ui.label('(Trống)').classes('text-gray-400 italic')
+                                with saved_list_container: ui.label('(Trống)').classes('text-gray-400 italic')
                                 return
 
                             for k in keys:
@@ -267,7 +349,11 @@ def run_gui():
                                     with ui.card().classes('w-full mb-2 p-2'):
                                         ui.label(k).classes('font-bold')
                                         with ui.row().classes('w-full justify-between mt-2'):
+                                            # Run button
                                             ui.button('Chạy', on_click=lambda key=k: run_custom_profile(key)).props('size=sm color=green icon=play_arrow')
+                                            # Timer button
+                                            ui.button(on_click=lambda key=k: open_timer_dialog(lambda: run_custom_profile(key))).props('size=sm color=orange icon=timer').tooltip('Hẹn giờ')
+                                            # Delete button
                                             ui.button(on_click=lambda key=k: delete_custom_profile(key)).props('size=sm color=red icon=delete').classes('px-2')
 
                         async def run_custom_profile(name):
@@ -284,7 +370,7 @@ def run_gui():
                                 courses_json = json.loads(data)
                                 target_courses = [Course(d) for d in courses_json]
                                 print(f"Đã tải {len(target_courses)} môn từ bộ nhớ trình duyệt.")
-                                await register_service.register_custom(user, target_courses)
+                                await run_safe(register_service.register_custom(user, target_courses))
                                 ui.notify('Hoàn tất profile.', type='positive')
                             except Exception as e:
                                 print(f"[ERROR] Run profile failed: {e}")
@@ -297,7 +383,6 @@ def run_gui():
                         ui.button('Làm mới danh sách', on_click=refresh_saved_custom_list).classes('m-2 w-full')
                         ui.timer(0.5, refresh_saved_custom_list, once=True)
 
-                    # --- RIGHT: Creator ---
                     with splitter.after:
                         ui.label('Tạo hồ sơ mới').classes('p-2 font-bold bg-gray-100 block')
                         
@@ -328,8 +413,10 @@ def run_gui():
                                         
                                         final_courses = list(custom_selections.values())
                                         data_list = [c.data for c in final_courses]
-                                        json_str = json.dumps(data_list).replace("'", "\'")
+                                        
+                                        json_str = json.dumps(data_list).replace("'", "\\'")
                                         ui.run_javascript(f"localStorage.setItem('autotlu_profile_{name}', '{json_str}');")
+                                        
                                         ui.notify(f'Đã lưu profile: {name}', type='positive')
                                         profile_name_input.value = ''
                                         custom_selections.clear()
@@ -344,7 +431,9 @@ def run_gui():
                                         {'name': 'selected', 'label': 'Lớp đã chọn', 'field': 'selected', 'align': 'left'},
                                         {'name': 'action', 'label': 'Chọn lớp', 'field': 'action'},
                                     ],
-                                    rows=[], row_key='id', pagination=10
+                                    rows=[],
+                                    row_key='id',
+                                    pagination=10
                                 ).classes('w-full')
                                 
                                 creator_table.add_slot('body-cell-action', '''
@@ -359,8 +448,10 @@ def run_gui():
                                     rows = []
                                     for i, group in enumerate(courses_cache):
                                         if not group: continue
+                                        
                                         sel_course = custom_selections.get(i)
                                         sel_text = f"{sel_course.display_name}" if sel_course else "---"
+                                        
                                         rows.append({
                                             'id': i,
                                             'name': group[0].display_name.split('(')[0],
@@ -382,10 +473,13 @@ def run_gui():
                                     if not courses_cache or subject_idx >= len(courses_cache): return
                                     options = courses_cache[subject_idx]
                                     subject_name = options[0].display_name.split('(')[0]
+                                    
                                     other_courses = [c for idx, c in custom_selections.items() if idx != subject_idx]
 
                                     with ui.dialog() as dialog, ui.card().classes('w-full max-w-4xl'):
                                         ui.label(f'Chọn lớp cho: {subject_name}').classes('text-h6 font-bold')
+                                        ui.label('Các lớp bị trùng lịch với những môn đã chọn sẽ bị vô hiệu hóa.').classes('text-gray-500 text-sm mb-4')
+                                        
                                         with ui.scroll_area().classes('h-96 w-full border rounded p-2'):
                                             for opt in options:
                                                 conflict = False
@@ -393,85 +487,90 @@ def run_gui():
                                                     if opt.conflicts_with(existing):
                                                         conflict = True
                                                         break
+                                                
                                                 card_classes = 'w-full mb-2 p-2 border-l-4 '
-                                                if conflict: card_classes += 'border-red-500 bg-gray-100 opacity-60'
-                                                elif custom_selections.get(subject_idx) == opt: card_classes += 'border-green-500 bg-green-50'
-                                                else: card_classes += 'border-gray-300 hover:bg-blue-50 cursor-pointer'
+                                                if conflict:
+                                                    card_classes += 'border-red-500 bg-gray-100 opacity-60'
+                                                elif custom_selections.get(subject_idx) == opt:
+                                                    card_classes += 'border-green-500 bg-green-50'
+                                                else:
+                                                    card_classes += 'border-gray-300 hover:bg-blue-50 cursor-pointer'
 
                                                 with ui.card().classes(card_classes):
                                                     with ui.row().classes('w-full items-center justify-between'):
                                                         with ui.column():
                                                             ui.label(opt.display_name).classes('font-bold')
                                                             ui.label(f"Sĩ số: {opt.current_students}/{opt.max_students}").classes('text-xs')
-                                                        if conflict: ui.label('TRÙNG LỊCH').classes('text-red-600 font-bold text-xs')
+                                                        
+                                                        if conflict:
+                                                            ui.label('TRÙNG LỊCH').classes('text-red-600 font-bold text-xs')
                                                         else:
                                                             def pick(c=opt):
                                                                 custom_selections[subject_idx] = c
                                                                 dialog.close()
                                                                 update_creator_table()
-                                                            if custom_selections.get(subject_idx) == opt: ui.icon('check_circle', color='green').props('size=sm')
-                                                            else: ui.button('Chọn', on_click=pick).props('size=sm flat color=indigo')
+                                                                ui.notify(f'Đã chọn: {c.code}', type='positive')
+                                                            
+                                                            if custom_selections.get(subject_idx) == opt:
+                                                                ui.icon('check_circle', color='green').props('size=sm')
+                                                            else:
+                                                                ui.button('Chọn', on_click=pick).props('size=sm flat color=indigo')
+
                                         ui.button('Đóng', on_click=dialog.close).classes('w-full mt-2')
+                                    
                                     dialog.open()
+
                         render_creator()
 
-            # --- Browser Opening & Token Bridge ---
+            # --- Browser Opening Bridge for Google ---
             pending_url = []
-            pending_google_token = []
-            def open_browser_bridge(url): pending_url.append(url)
-            def google_token_update_bridge(token_json): pending_google_token.append(token_json)
-                
+            def browser_cb(url): pending_url.append(url)
+
             async def check_bridges():
                 if pending_url:
                     url = pending_url.pop(0)
-                    ui.notify('Đang mở trình duyệt xác thực...', type='info')
+                    ui.notify('Mở trình duyệt xác thực...', type='info')
                     ui.run_javascript(f'window.open("{url}", "_blank")')
-                if pending_google_token:
-                    token = pending_google_token.pop(0)
-                    token_js = token.replace('\\', '\\\\').replace("'", "\'").replace('"', '\"')
-                    ui.run_javascript(f"localStorage.setItem('autotlu_google_token', '{token_js}');")
+            
             ui.timer(1.0, check_bridges)
 
             # ================= TAB: TIỆN ÍCH =================
             with ui.tab_panel(tab_utils):
                 ui.label('Tiện ích').classes('text-h6 mb-4')
                 with ui.row().classes('w-full justify-center gap-4'):
-                    with ui.card().classes('w-64 p-4 text-center'):
+                    # ICS
+                    with ui.card().classes('w-64 p-4 text-center cursor-pointer hover:shadow-lg'):
                         ui.icon('calendar_today', size='4em').classes('text-blue-500 mx-auto')
                         ui.label('Xuất File .ICS').classes('font-bold text-lg mt-2')
                         async def do_export():
-                            if not user: 
-                                ui.notify('Chưa đăng nhập!', type='warning')
-                                return
                             try:
-                                content = await run_safe(calendar_service.get_ics_content(user))
-                                # Generate filename
+                                content = await run_safe(cal_service.get_ics_content(user))
                                 import datetime
-                                date_str = datetime.datetime.now().strftime("%d%m%y")
-                                filename = f"TLU_Schedule_{date_str}.ics"
-                                
-                                # Trigger browser download
-                                ui.download(content.encode('utf-8'), filename)
-                                ui.notify('Đang tải xuống...', type='positive')
-                            except Exception as e:
-                                ui.notify(f'Lỗi: {e}', type='negative')
+                                fname = f"TLU_{datetime.datetime.now().strftime('%d%m%y')}.ics"
+                                ui.download(content.encode('utf-8'), fname)
+                                ui.notify('Đang tải...', type='positive')
+                            except Exception as e: ui.notify(f"Lỗi: {e}", type='negative')
                         ui.button('Thực hiện', on_click=do_export).classes('w-full mt-4 bg-blue-600')
 
-                    with ui.card().classes('w-64 p-4 text-center'):
+                    # Google
+                    with ui.card().classes('w-64 p-4 text-center cursor-pointer hover:shadow-lg'):
                         ui.icon('sync', size='4em').classes('text-green-500 mx-auto')
                         ui.label('Google Calendar').classes('font-bold text-lg mt-2')
                         async def do_google_sync():
-                            if not user: return
-                            tabs.value = tab_logs 
-                            print("\n--- BẮT ĐẦU ĐỒNG BỘ GOOGLE CALENDAR ---")
+                            tabs.value = tab_logs
+                            print("\n--- GOOGLE SYNC ---")
                             try:
-                                token_json = await ui.run_javascript("return localStorage.getItem('autotlu_google_token');", timeout=5.0)
-                                events = await calendar_service.get_tlu_events(user)
-                                await run.io_bound(calendar_service.sync_to_google, events, initial_token=token_json, on_token_update=google_token_update_bridge, browser_callback=open_browser_bridge)
-                                ui.notify('Đồng bộ thành công!', type='positive')
+                                evts = await cal_service.get_tlu_events(user)
+                                await run.io_bound(
+                                    cal_service.sync_to_google, 
+                                    evts, 
+                                    initial_token=None, 
+                                    on_token_update=None, 
+                                    browser_callback=browser_cb
+                                )
+                                ui.notify('Thành công', type='positive')
                             except Exception as e:
                                 print(f"[ERROR] Sync failed: {e}")
-                                ui.notify('Lỗi đồng bộ (Xem Logs)', type='negative')
                         ui.button('Thực hiện', on_click=do_google_sync).classes('w-full mt-4 bg-green-600')
 
             # ================= TAB: LOGS =================
