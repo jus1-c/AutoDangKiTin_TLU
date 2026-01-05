@@ -4,7 +4,9 @@ import sys
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import List, Set
+from typing import List, Set, Dict
+
+# Import from src (Local/File-based)
 from src.config import Config
 from src.core.client import TLUClient
 from src.services.auth_service import AuthService
@@ -14,7 +16,7 @@ from src.services.calendar_service import CalendarService
 from src.models.course import Course
 from src.core.exceptions import LoginError, NetworkError
 
-# --- 1. Stream Redirector ---
+# --- 1. Stream Redirector --- 
 class UILogger(logging.Handler):
     def __init__(self):
         super().__init__()
@@ -55,7 +57,7 @@ logging.basicConfig(level=logging.INFO)
 root_logger = logging.getLogger()
 root_logger.addHandler(ui_logger)
 
-# --- Global Services ---
+# --- Global Services (Singleton for GUI Local) ---
 client = TLUClient()
 auth_service = AuthService(client)
 course_service = CourseService(client)
@@ -72,53 +74,44 @@ def run_gui():
     async def main_page():
         global user, is_summer_sem, courses_cache
         
-        # --- Task Management ---
+        # Task Management
         active_tasks: Set[asyncio.Task] = set()
 
         def cleanup_tasks():
-            if active_tasks:
-                print(f"Client ngắt kết nối. Đang huỷ {len(active_tasks)} tác vụ chạy nền...")
-                for task in active_tasks:
-                    task.cancel()
-                active_tasks.clear()
-
+            for t in active_tasks: t.cancel()
+            # client.close() explicitly removed
         app.on_disconnect(cleanup_tasks)
 
-        # Helper for compatibility
         async def run_safe(coro):
             task = asyncio.create_task(coro)
             active_tasks.add(task)
             task.add_done_callback(active_tasks.discard)
             try:
                 return await task
-            except asyncio.CancelledError: pass
+            except asyncio.CancelledError:
+                pass
             except Exception as e:
                 print(f"[ERROR] {e}")
                 ui.notify(f"Lỗi: {e}", type='negative')
 
         # --- Timer Logic ---
-        async def wait_until(target_time: datetime, log_func=print):
-            """Waits until target_time, printing countdown."""
+        async def wait_until(target_time: datetime):
             while True:
                 now = datetime.now()
-                if now >= target_time:
-                    break
-                
+                if now >= target_time: break
                 diff = target_time - now
                 seconds = int(diff.total_seconds())
-                
                 if seconds > 60:
-                    if seconds % 30 == 0: # Log every 30s if far
-                        log_func(f"⏳Còn {seconds} giây nữa...")
+                    if seconds % 30 == 0: print(f"⏳Còn {seconds} giây...")
                     await asyncio.sleep(1)
                 else:
-                    log_func(f"⏳ Đếm ngược: {seconds}s")
+                    print(f"⏳ Đếm ngược: {seconds}s")
                     await asyncio.sleep(1)
-            log_func("🚀 Đã đến giờ! Bắt đầu chạy...")
+            print("🚀 Bắt đầu chạy!")
 
         # --- UI Layout ---
-        with ui.header().classes('bg-blue-700 text-white shadow-lg') as header:
-            ui.label('AutoDangKiTin TLU (Web GUI)').classes('text-h6 font-bold')
+        with ui.header().classes('bg-blue-700 text-white shadow-lg'):
+            ui.label('AutoDangKiTin TLU (GUI Local)').classes('text-h6 font-bold')
             ui.space()
             user_label = ui.label('Chưa đăng nhập').classes('mr-4')
             logout_btn = ui.button('Đăng xuất', on_click=lambda: logout()).props('flat color=white').classes('hidden')
@@ -130,7 +123,7 @@ def run_gui():
             tab_utils = ui.tab('Tiện ích', icon='build')
             tab_logs = ui.tab('Logs', icon='terminal')
 
-        # Helper to manage Tab State
+        # Tab State
         def update_tabs_state():
             is_logged_in = user is not None
             tab_register.enabled = is_logged_in
@@ -180,6 +173,12 @@ def run_gui():
 
                     ui.button('Đăng nhập', on_click=handle_login).classes('w-full bg-blue-600')
                     
+                    def toggle_debug(e):
+                        Config.DEBUG = e.value
+                        print(f"Debug Mode: {e.value}")
+                    ui.switch('Chế độ Debug', on_change=toggle_debug).classes('mt-4')
+
+                    # Auto-fill
                     async def check_browser_creds():
                         try:
                             json_str = await ui.run_javascript("return localStorage.getItem('autotlu_creds');", timeout=5.0)
@@ -190,23 +189,18 @@ def run_gui():
                                 ui.notify('Đã tải thông tin từ trình duyệt', type='info')
                         except Exception as e:
                             print(f"Error reading local storage: {e}")
-                            
-                    ui.timer(0.5, check_browser_creds, once=True)
+                    ui.timer(0.1, check_browser_creds, once=True)
 
-            # Shared function to fetch courses
+            # Helper: Ensure Courses Loaded
             async def ensure_courses_loaded():
                 global courses_cache
-                if not user:
-                    ui.notify('Vui lòng đăng nhập trước!', type='warning')
-                    tabs.value = tab_login
-                    return False
-                
+                if not user: return False
                 if not courses_cache:
-                    ui.notify('Đang tải danh sách môn từ server...', type='info')
+                    ui.notify('Đang tải danh sách môn...', type='info')
                     try:
-                        raw_courses, names = await run_safe(course_service.fetch_courses(user, is_summer_sem))
-                        courses_cache = raw_courses
-                        update_register_table(raw_courses, names)
+                        raw, names = await run_safe(course_service.fetch_courses(user, is_summer_sem))
+                        courses_cache = raw
+                        update_register_table(raw, names)
                         return True
                     except Exception as e:
                         print(f"Error fetching courses: {e}")
@@ -228,18 +222,63 @@ def run_gui():
                 reg_table.rows = rows
                 reg_table.update()
 
+            async def open_timer_dialog(callback):
+                # Ensure meta data
+                if not course_service.last_meta:
+                    await ensure_courses_loaded()
+
+                with ui.dialog() as dlg, ui.card().classes('w-96'):
+                    ui.label('Hẹn giờ chạy:').classes('text-lg font-bold')
+                    
+                    ts = course_service.last_meta.get('startDate')
+                    if ts:
+                        dt = datetime.fromtimestamp(ts/1000)
+                    else:
+                        dt = datetime.now() + timedelta(minutes=1)
+                    
+                    # --- NEW UI: Date & Time Pickers ---
+                    with ui.row().classes('w-full items-center justify-between'):
+                        d_input = ui.input('Ngày', value=dt.strftime('%Y-%m-%d'))
+                        with d_input.add_slot('append'):
+                            ui.icon('event').classes('cursor-pointer').on('click', lambda: date_menu.open())
+                            with ui.menu() as date_menu:
+                                ui.date().bind_value(d_input)
+                        
+                        t_input = ui.input('Giờ', value=dt.strftime('%H:%M'))
+                        with t_input.add_slot('append'):
+                            ui.icon('access_time').classes('cursor-pointer').on('click', lambda: time_menu.open())
+                            with ui.menu() as time_menu:
+                                ui.time().bind_value(t_input)
+
+                    async def start():
+                        try:
+                            target = datetime.strptime(f"{d_input.value} {t_input.value}", '%Y-%m-%d %H:%M')
+                            if target < datetime.now():
+                                ui.notify('Thời gian này đã qua!', type='warning')
+                                return
+                                
+                            dlg.close()
+                            tabs.value = tab_logs
+                            print(f"⏰ Đã hẹn giờ chạy vào: {target.strftime('%d/%m/%Y %H:%M:%S')}")
+                            await wait_until(target)
+                            await callback()
+                        except ValueError:
+                            ui.notify('Sai định dạng ngày giờ!', type='negative')
+
+                    ui.button('Bắt đầu đếm ngược', on_click=start).classes('w-full bg-indigo-600')
+                dlg.open()
+
             # ================= TAB: ĐĂNG KÝ NHANH =================
             with ui.tab_panel(tab_register):
                 with ui.row().classes('items-center mb-4'):
-                    ui.switch('Học kỳ Hè', on_change=lambda e: set_sem(e.value))
+                    def on_sem_change(e): global is_summer_sem; is_summer_sem = e.value
+                    ui.switch('Học kỳ Hè', on_change=on_sem_change)
                     
                     async def fetch_courses_ui():
                         global courses_cache
                         courses_cache = [] 
                         await ensure_courses_loaded()
                         ui.notify('Đã cập nhật dữ liệu mới nhất', type='positive')
-
-                    def set_sem(val): global is_summer_sem; is_summer_sem = val
 
                     ui.button('Tải danh sách môn', on_click=fetch_courses_ui).props('icon=download')
 
@@ -251,48 +290,6 @@ def run_gui():
                     ],
                     rows=[], selection='multiple', row_key='id', pagination=10
                 ).classes('w-full')
-
-                # Helper to open timer dialog
-                def open_timer_dialog(callback):
-                    with ui.dialog() as dialog, ui.card():
-                        ui.label('Chọn thời gian bắt đầu chạy:').classes('text-lg font-bold')
-                        
-                        # Lấy thời gian mặc định từ JSON hoặc hiện tại + 1p
-                        start_ts = course_service.last_meta.get('startDate')
-                        if start_ts:
-                            default_time = datetime.fromtimestamp(start_ts / 1000).strftime('%H:%M')
-                        else:
-                            default_time = (datetime.now() + timedelta(minutes=1)).strftime('%H:%M')
-                            
-                        time_input = ui.input('Giờ:Phút (HH:MM)', value=default_time)
-                        
-                        # Date input (optional, default today)
-                        # ui.date() is a bit complex, let's assume TODAY for simplicity or add later
-                        # For simple usage, Time is usually enough for registration day
-                        
-                        async def start_timer():
-                            try:
-                                t_str = time_input.value
-                                target = datetime.combine(datetime.now().date(), datetime.strptime(t_str, '%H:%M').time())
-                                if target < datetime.now():
-                                    # If time passed today, assume tomorrow? Or warn?
-                                    # Warn better
-                                    if (datetime.now() - target).total_seconds() > 60:
-                                        ui.notify('Thời gian đã qua!', type='warning')
-                                        return
-                                    
-                                dialog.close()
-                                tabs.value = tab_logs
-                                print(f"\n--- HẸN GIỜ CHẠY VÀO LÚC: {target.strftime('%H:%M:%S')} ---")
-                                await wait_until(target)
-                                await callback()
-                                
-                            except ValueError:
-                                ui.notify('Định dạng giờ sai (HH:MM)', type='negative')
-
-                        ui.button('Bắt đầu đếm ngược', on_click=start_timer).classes('w-full bg-indigo-600')
-
-                    dialog.open()
 
                 async def do_register_fast():
                     if not await ensure_courses_loaded(): return
@@ -306,8 +303,10 @@ def run_gui():
                     tabs.value = tab_logs
                     print(f"\n--- BẮT ĐẦU ĐĂNG KÝ NHANH ({len(indices)} môn) ---")
                     try:
-                        await run_safe(register_service.register_subjects(user, indices, courses_cache, is_summer_sem))
+                        failed = await run_safe(register_service.register_subjects(user, indices, courses_cache, is_summer_sem))
                         ui.notify('Hoàn tất. Kiểm tra Logs.', type='positive')
+                        if failed:
+                            start_sniffing(failed)
                     except Exception as e:
                         print(f"[ERROR] {e}")
 
@@ -319,10 +318,11 @@ def run_gui():
             with ui.tab_panel(tab_custom):
                 ui.label('Quản lý hồ sơ đăng ký (Lưu trên trình duyệt)').classes('text-h6 mb-2')
                 
-                custom_selections = {} 
+                custom_selections = {}
 
                 with ui.splitter(value=30).classes('w-full h-full border rounded') as splitter:
                     
+                    # --- LEFT: Saved Lists ---
                     with splitter.before:
                         ui.label('Hồ sơ đã lưu').classes('p-2 font-bold bg-gray-100 block')
                         saved_list_container = ui.column().classes('p-2 w-full')
@@ -340,8 +340,10 @@ def run_gui():
                             return items;
                             """
                             keys = await ui.run_javascript(js_code, timeout=5.0)
+                            
                             if not keys:
-                                with saved_list_container: ui.label('(Trống)').classes('text-gray-400 italic')
+                                with saved_list_container:
+                                    ui.label('(Trống)').classes('text-gray-400 italic')
                                 return
 
                             for k in keys:
@@ -352,7 +354,7 @@ def run_gui():
                                             # Run button
                                             ui.button('Chạy', on_click=lambda key=k: run_custom_profile(key)).props('size=sm color=green icon=play_arrow')
                                             # Timer button
-                                            ui.button(on_click=lambda key=k: open_timer_dialog(lambda: run_custom_profile(key))).props('size=sm color=orange icon=timer').tooltip('Hẹn giờ')
+                                            ui.button(on_click=lambda key=k: open_timer_dialog(lambda: run_custom_profile(key))).props('size=sm color=orange icon=timer')
                                             # Delete button
                                             ui.button(on_click=lambda key=k: delete_custom_profile(key)).props('size=sm color=red icon=delete').classes('px-2')
 
@@ -370,19 +372,25 @@ def run_gui():
                                 courses_json = json.loads(data)
                                 target_courses = [Course(d) for d in courses_json]
                                 print(f"Đã tải {len(target_courses)} môn từ bộ nhớ trình duyệt.")
-                                await run_safe(register_service.register_custom(user, target_courses))
+                                
+                                failed = await run_safe(register_service.register_custom(user, target_courses))
                                 ui.notify('Hoàn tất profile.', type='positive')
+                                if failed:
+                                    start_sniffing(failed)
                             except Exception as e:
                                 print(f"[ERROR] Run profile failed: {e}")
 
                         async def delete_custom_profile(name):
+                            # Do not await removeItem as it returns void/undefined and causes timeout waiting for result
                             ui.run_javascript(f'localStorage.removeItem("autotlu_profile_{name}")')
-                            ui.notify(f'Đã xóa {name}')
-                            refresh_saved_custom_list()
+                            await asyncio.sleep(0.1) # Yield to let JS execute
+                            await refresh_saved_custom_list()
+                            ui.notify('Đã xóa hồ sơ', type='info')
 
                         ui.button('Làm mới danh sách', on_click=refresh_saved_custom_list).classes('m-2 w-full')
                         ui.timer(0.5, refresh_saved_custom_list, once=True)
 
+                    # --- RIGHT: Creator ---
                     with splitter.after:
                         ui.label('Tạo hồ sơ mới').classes('p-2 font-bold bg-gray-100 block')
                         
@@ -476,10 +484,8 @@ def run_gui():
                                     
                                     other_courses = [c for idx, c in custom_selections.items() if idx != subject_idx]
 
-                                    with ui.dialog() as dialog, ui.card().classes('w-full max-w-4xl'):
+                                    with ui.dialog() as dlg, ui.card().classes('w-full max-w-4xl'):
                                         ui.label(f'Chọn lớp cho: {subject_name}').classes('text-h6 font-bold')
-                                        ui.label('Các lớp bị trùng lịch với những môn đã chọn sẽ bị vô hiệu hóa.').classes('text-gray-500 text-sm mb-4')
-                                        
                                         with ui.scroll_area().classes('h-96 w-full border rounded p-2'):
                                             for opt in options:
                                                 conflict = False
@@ -507,82 +513,183 @@ def run_gui():
                                                         else:
                                                             def pick(c=opt):
                                                                 custom_selections[subject_idx] = c
-                                                                dialog.close()
+                                                                dlg.close()
                                                                 update_creator_table()
-                                                                ui.notify(f'Đã chọn: {c.code}', type='positive')
                                                             
                                                             if custom_selections.get(subject_idx) == opt:
                                                                 ui.icon('check_circle', color='green').props('size=sm')
                                                             else:
                                                                 ui.button('Chọn', on_click=pick).props('size=sm flat color=indigo')
 
-                                        ui.button('Đóng', on_click=dialog.close).classes('w-full mt-2')
+                                        ui.button('Đóng', on_click=dlg.close).classes('w-full mt-2')
                                     
-                                    dialog.open()
+                                    dlg.open()
 
                         render_creator()
 
-            # --- Browser Opening Bridge for Google ---
+            # --- Browser Opening & Token Bridge ---
             pending_url = []
-            def browser_cb(url): pending_url.append(url)
-
+            pending_google_token = []
+            
+            def open_browser_bridge(url):
+                pending_url.append(url)
+            
+            def google_token_update_bridge(token_json):
+                pending_google_token.append(token_json)
+                
             async def check_bridges():
                 if pending_url:
                     url = pending_url.pop(0)
                     ui.notify('Mở trình duyệt xác thực...', type='info')
                     ui.run_javascript(f'window.open("{url}", "_blank")')
-            
+                if pending_google_token:
+                    token = pending_google_token.pop(0)
+                    token_js = token.replace('\\', '\\\\').replace("'", "\'" ).replace('"', '\"')
+                    ui.run_javascript(f"localStorage.setItem('autotlu_google_token', '{token_js}');")
+
             ui.timer(1.0, check_bridges)
 
             # ================= TAB: TIỆN ÍCH =================
             with ui.tab_panel(tab_utils):
                 ui.label('Tiện ích').classes('text-h6 mb-4')
                 with ui.row().classes('w-full justify-center gap-4'):
-                    # ICS
-                    with ui.card().classes('w-64 p-4 text-center cursor-pointer hover:shadow-lg'):
+                    # Nút 1: Xuất ICS
+                    with ui.card().classes('w-64 p-4 text-center cursor-pointer hover:shadow-lg transition'):
                         ui.icon('calendar_today', size='4em').classes('text-blue-500 mx-auto')
                         ui.label('Xuất File .ICS').classes('font-bold text-lg mt-2')
+                        ui.label('Dùng cho Calendar, Outlook...').classes('text-sm text-gray-500')
+                        
                         async def do_export():
+                            if not user: 
+                                ui.notify('Chưa đăng nhập!', type='warning')
+                                return
                             try:
-                                content = await run_safe(cal_service.get_ics_content(user))
+                                content = await run_safe(calendar_service.get_ics_content(user))
                                 import datetime
                                 fname = f"TLU_{datetime.datetime.now().strftime('%d%m%y')}.ics"
                                 ui.download(content.encode('utf-8'), fname)
                                 ui.notify('Đang tải...', type='positive')
                             except Exception as e: ui.notify(f"Lỗi: {e}", type='negative')
+                        
                         ui.button('Thực hiện', on_click=do_export).classes('w-full mt-4 bg-blue-600')
 
-                    # Google
-                    with ui.card().classes('w-64 p-4 text-center cursor-pointer hover:shadow-lg'):
+                    # Nút 2: Google Calendar Sync
+                    with ui.card().classes('w-64 p-4 text-center cursor-pointer hover:shadow-lg transition'):
                         ui.icon('sync', size='4em').classes('text-green-500 mx-auto')
-                        ui.label('Google Calendar').classes('font-bold text-lg mt-2')
+                        ui.label('Đồng bộ Google Calendar').classes('font-bold text-lg mt-2')
+                        ui.label('Tự động thêm vào GG Calendar').classes('text-sm text-gray-500')
+                        
                         async def do_google_sync():
-                            tabs.value = tab_logs
-                            print("\n--- GOOGLE SYNC ---")
+                            if not user:
+                                ui.notify('Chưa đăng nhập!', type='warning')
+                                return
+                            
+                            tabs.value = tab_logs 
+                            print("\n--- BẮT ĐẦU ĐỒNG BỘ GOOGLE CALENDAR ---")
+                            
                             try:
-                                evts = await cal_service.get_tlu_events(user)
+                                # 1. Get token from LocalStorage
+                                token_json = await ui.run_javascript("return localStorage.getItem('autotlu_google_token');", timeout=5.0)
+                                events = await run_safe(calendar_service.get_tlu_events(user))
+                                
                                 await run.io_bound(
-                                    cal_service.sync_to_google, 
-                                    evts, 
-                                    initial_token=None, 
-                                    on_token_update=None, 
-                                    browser_callback=browser_cb
+                                    calendar_service.sync_to_google, 
+                                    events, 
+                                    initial_token=token_json,
+                                    on_token_update=google_token_update_bridge,
+                                    browser_callback=open_browser_bridge
                                 )
-                                ui.notify('Thành công', type='positive')
+                                
+                                ui.notify('Đồng bộ thành công!', type='positive')
                             except Exception as e:
                                 print(f"[ERROR] Sync failed: {e}")
+                                ui.notify('Lỗi đồng bộ (Xem Logs)', type='negative')
+
                         ui.button('Thực hiện', on_click=do_google_sync).classes('w-full mt-4 bg-green-600')
 
             # ================= TAB: LOGS =================
             with ui.tab_panel(tab_logs):
+                # Sniffing UI
+                row_sniff = ui.row().classes('items-center hidden')
+                with row_sniff:
+                    ui.spinner('dots').classes('text-green-500')
+                    lbl_sniff = ui.label('Đang săn môn (Sniffing)...').classes('font-bold text-green-500 mr-4')
+                    ui.button('DỪNG LẠI (STOP)', on_click=lambda: stop_sniffing()).classes('bg-red-600')
+
                 ui.label('Logs').classes('text-h6')
                 log_box = ui.log(max_lines=5000).classes('w-full h-96 bg-gray-900 text-green-400 font-mono p-2')
                 ui_logger.set_element(log_box)
                 ui.button('Xóa logs', on_click=log_box.clear)
 
+        # --- SNIFFING LOGIC ---
+        sniff_task = None
+        is_sniffing = False
+
+        def start_sniffing(failed):
+            nonlocal sniff_task, is_sniffing
+            if is_sniffing: return
+            
+            is_sniffing = True
+            row_sniff.classes(remove='hidden')
+            print(f"--- BẮT ĐẦU SĂN {len(failed)} MÔN ---")
+            
+            async def loop():
+                targets = failed
+                while is_sniffing and targets:
+                    print(f"Đang thử lại {len(targets)} môn...")
+                    
+                    # Manual retry wrapper
+                    # Need to access register_single_subject logic
+                    # Since register_service is stateless, we can call it.
+                    # But we need result. RegisterService doesn't expose single wrapper nicely in src.
+                    # We will use register_single_subject directly from service if possible or burst request
+                    
+                    tasks = []
+                    url = user.register_summer_url if is_summer_sem else user.register_url
+                    
+                    # We need a way to know which specific course succeeded.
+                    # RegisterService.register_single_subject returns Bool.
+                    # We need to wrap it.
+                    
+                    async def attempt(c):
+                        success = await register_service.register_single_subject(url, [c], [])
+                        return (success, c)
+
+                    for c in targets:
+                        tasks.append(attempt(c))
+                    
+                    results = await asyncio.gather(*tasks)
+                    
+                    new_failed = []
+                    for success, course in results:
+                        if success: 
+                            print(f"[SNIFFED] Săn thành công: {course.display_name}")
+                            ui.notify(f"Săn được: {course.display_name}", type='positive')
+                        else: 
+                            new_failed.append(course)
+                    
+                    targets = new_failed
+                    if not targets:
+                        print("ĐÃ SĂN HẾT!")
+                        stop_sniffing()
+                        break
+                    
+                    await asyncio.sleep(2)
+            
+            sniff_task = asyncio.create_task(loop())
+            active_tasks.add(sniff_task)
+
+        def stop_sniffing():
+            nonlocal is_sniffing, sniff_task
+            is_sniffing = False
+            if sniff_task: sniff_task.cancel()
+            row_sniff.classes(add='hidden')
+            print("--- ĐÃ DỪNG SĂN ---")
+
         async def logout():
             global user
             user = None
+            stop_sniffing() # Stop on logout
             update_tabs_state()
             tabs.value = tab_login
             ui.notify('Đã đăng xuất')

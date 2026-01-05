@@ -11,9 +11,9 @@ class RegisterService:
         self.client = client
         self.semaphore = asyncio.Semaphore(Config.CONCURRENCY_LIMIT)
 
-    async def register_subjects(self, user: User, subject_indices: List[int], all_courses: List[List[Course]], is_summer: bool = False):
+    async def register_subjects(self, user: User, subject_indices: List[int], all_courses: List[List[Course]], is_summer: bool = False) -> List[Course]:
         """
-        Registers for multiple subjects.
+        Registers for multiple subjects. Returns list of failed courses.
         """
         url = user.register_summer_url if is_summer else user.register_url
         
@@ -30,19 +30,17 @@ class RegisterService:
 
         if not tasks:
             print("Không có môn nào để đăng ký.")
-            return
+            return []
 
         print("Đang gửi yêu cầu đăng ký...")
         await asyncio.gather(*tasks)
         
-        # Auto Sniffing if failed
-        if failed_courses_to_sniff:
-            print(f"\nCó {len(failed_courses_to_sniff)} môn đăng ký thất bại. Tự động chuyển sang chế độ 'săn' (Sniffing)...")
-            await self.sniffing_loop(user, failed_courses_to_sniff, is_summer)
+        # Don't auto-loop here, return to UI controller
+        return failed_courses_to_sniff
 
-    async def register_custom(self, user: User, courses: List[Course]):
-        """Registers a specific list of courses (from Custom File)."""
-        url = user.register_url # Defaulting to main semester
+    async def register_custom(self, user: User, courses: List[Course]) -> List[Course]:
+        """Registers a specific list of courses. Returns failed courses."""
+        url = user.register_url 
         
         failed_courses = []
         tasks = []
@@ -50,10 +48,7 @@ class RegisterService:
              tasks.append(self.register_single_subject(url, [course], failed_courses))
              
         await asyncio.gather(*tasks)
-        
-        if failed_courses:
-             print(f"\nCó {len(failed_courses)} môn thất bại. Sniffing...")
-             await self.sniffing_loop(user, failed_courses)
+        return failed_courses
 
     async def register_single_subject(self, url: str, courses: List[Course], failed_list: List[Course]) -> bool:
         """
@@ -77,43 +72,22 @@ class RegisterService:
         return any(results)
 
     async def _send_register_request(self, url: str, data: dict) -> bool:
-        """Sends a single registration request with infinite retry on network failure."""
         async with self.semaphore:
             while True:
                 try:
                     response = await self.client.request("POST", url, json=data)
-                    
                     try:
                         res_json = response.json()
-                        # Return True if Success (0), False if Logic Fail (-x)
                         return res_json.get('status') == 0
                     except:
-                        # Json parse error (Server overloaded returning HTML?) -> Retry
                         continue
-                        
                 except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.WriteTimeout):
-                    # Network error -> Retry immediately
                     continue
                 except Exception:
-                    # Unknown error -> Retry
                     continue
 
+    # sniffing_loop logic moved to UI controller or kept as utility if needed, 
+    # but for GUI we use the UI loop. Keep it for CLI compatibility if needed.
     async def sniffing_loop(self, user: User, courses: List[Course], is_summer: bool = False):
-        print("Bắt đầu chế độ 'săn' (Sniffing mode)... Nhấn Ctrl+C để dừng.")
-        url = user.register_summer_url if is_summer else user.register_url
-        
-        while True:
-            if not courses:
-                print("Đã săn hết các môn!")
-                break
-
-            try:
-                for course in courses[:]: # Copy list to iterate safely
-                    success = await self._burst_request(url, course.data, count=1)
-                    if success:
-                        print(f"SNIFF THÀNH CÔNG: Đã đăng ký {course.display_name}")
-                        courses.remove(course) 
-            except Exception as e:
-                print(f"Sniff error: {e}")
-            
-            await asyncio.sleep(2) 
+        # CLI version
+        pass
