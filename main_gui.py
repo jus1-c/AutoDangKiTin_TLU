@@ -30,6 +30,25 @@ if getattr(sys, 'frozen', False):
 # Explicitly import webview to ensure PyInstaller bundles it
 try:
     import webview
+    # Force Edge Chromium (WebView2) to avoid pythonnet/WinForms dependency issues
+    import os
+    os.environ["PYWEBVIEW_GUI"] = "edgechromium"
+    
+    # --- Monkey Patch for pywebview >= 5.0 'frameless' error ---
+    # NiceGUI passes 'frameless' which might be removed/renamed in newer pywebview
+    original_create_window = webview.create_window
+    
+    def patched_create_window(*args, **kwargs):
+        if 'frameless' in kwargs:
+            # Map 'frameless' to 'easy_drag' (closest alternative) or just pop it
+            # In v5, frameless is often handled via easy_drag=False/True logic or text_select
+            # Let's just remove it to be safe
+            kwargs.pop('frameless')
+        return original_create_window(*args, **kwargs)
+        
+    webview.create_window = patched_create_window
+    # -----------------------------------------------------------
+    
 except ImportError:
     pass
 
