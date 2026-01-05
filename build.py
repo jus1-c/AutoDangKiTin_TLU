@@ -35,6 +35,7 @@ def build(target_file='main_gui.py'):
         # '--windowed', 
         '--clean',
         '--add-data', f'{nicegui_path}{sep}nicegui',
+        '--hidden-import', 'webview', # Đảm bảo đóng gói pywebview
         target_file
     ]
     

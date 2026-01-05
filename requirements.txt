@@ -6,3 +6,4 @@ python-dotenv==1.0.0
 tenacity==8.2.3
 nicegui==1.4.13
 ics==0.7.2
+pywebview==5.1
