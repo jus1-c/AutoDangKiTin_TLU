@@ -49,7 +49,11 @@ class UILogger(logging.Handler):
             self.handleError(record)
 
     def write(self, message):
-        self.terminal_stdout.write(message)
+        if self.terminal_stdout:
+            try:
+                self.terminal_stdout.write(message)
+            except: pass
+            
         if self.log_element and message.strip():
             try:
                 self.log_element.push(message.rstrip())
@@ -57,10 +61,15 @@ class UILogger(logging.Handler):
                 pass
 
     def flush(self):
-        self.terminal_stdout.flush()
+        if self.terminal_stdout:
+            try:
+                self.terminal_stdout.flush()
+            except: pass
 
     def isatty(self):
-        return self.terminal_stdout.isatty()
+        if self.terminal_stdout:
+            return self.terminal_stdout.isatty()
+        return False
 
 ui_logger = UILogger()
 sys.stdout = ui_logger
