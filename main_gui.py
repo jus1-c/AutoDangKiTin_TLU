@@ -682,7 +682,17 @@ def run_gui():
             ui.run_javascript("localStorage.removeItem('autotlu_creds');")
 
     app.on_shutdown(client.close)
-    ui.run(title='AutoDangKiTin TLU', port=8080, reload=False, favicon='🎓')
+    
+    # Check if running as frozen executable (PyInstaller)
+    is_frozen = getattr(sys, 'frozen', False)
+    
+    ui.run(
+        title='AutoDangKiTin TLU', 
+        port=8080, 
+        reload=False, 
+        favicon='🎓',
+        native=is_frozen  # Use Native window only if frozen
+    )
 
 if __name__ in {"__main__", "__mp_main__"}:
     run_gui()
