@@ -8,6 +8,12 @@ if not hasattr(pkgutil, 'find_loader'):
     pkgutil.find_loader = find_loader
 # ----------------------------------------------------------------
 
+# Explicitly import webview to ensure PyInstaller bundles it
+try:
+    import webview
+except ImportError:
+    pass
+
 from nicegui import ui, app, run
 import asyncio
 import sys
@@ -691,7 +697,8 @@ def run_gui():
         port=8080, 
         reload=False, 
         favicon='🎓',
-        native=is_frozen  # Use Native window only if frozen
+        native=is_frozen,
+        window_size=(1200, 800) # Kích thước cửa sổ mặc định cho Native Mode
     )
 
 if __name__ in {"__main__", "__mp_main__"}:
