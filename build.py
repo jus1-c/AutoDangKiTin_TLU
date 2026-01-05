@@ -1,28 +1,40 @@
 import os
 import subprocess
 import sys
-import nicegui
 from pathlib import Path
+import pkgutil
+import importlib.util
+
+# --- HOTFIX for Python 3.12+ and vbuild/nicegui compatibility ---
+# pkgutil.find_loader was removed in Python 3.14 (and deprecated in 3.12)
+# vbuild (used by nicegui) still uses it. We patch it here.
+if not hasattr(pkgutil, 'find_loader'):
+    def find_loader(fullname):
+        spec = importlib.util.find_spec(fullname)
+        return spec.loader if spec else None
+    pkgutil.find_loader = find_loader
+# ----------------------------------------------------------------
+
+import nicegui
 
 def build(target_file='main_gui.py'):
     print(f"Building {target_file}...")
     
-    # 1. Get NiceGUI path dynamically to include assets
+    # 1. Get NiceGUI path dynamically
     nicegui_path = Path(nicegui.__file__).parent
     print(f"NiceGUI Path found: {nicegui_path}")
     
     # 2. Define PyInstaller arguments
-    # Separator: ';' for Windows, ':' for Linux/Unix
     sep = ';' if os.name == 'nt' else ':'
     
     cmd = [
         'pyinstaller',
-        '--name', 'AutoDangKiTin_TLU', # Name of the executable
-        '--onefile',                   # Bundle into a single file
-        # '--windowed',                # Uncomment to hide console window (GUI mode)
-        '--clean',                     # Clean cache
-        '--add-data', f'{nicegui_path}{sep}nicegui', # Include NiceGUI assets
-        target_file                    # Main entry script
+        '--name', 'AutoDangKiTin_TLU',
+        '--onefile',
+        # '--windowed', 
+        '--clean',
+        '--add-data', f'{nicegui_path}{sep}nicegui',
+        target_file
     ]
     
     print(f"Build command: {' '.join(str(x) for x in cmd)}")
@@ -36,6 +48,5 @@ def build(target_file='main_gui.py'):
         sys.exit(1)
 
 if __name__ == '__main__':
-    # You can change this to 'main_web.py' if you want to build the multi-user version
     target = 'main_gui.py' 
     build(target)
