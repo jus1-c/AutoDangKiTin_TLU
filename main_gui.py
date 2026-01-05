@@ -90,8 +90,28 @@ def run_gui():
         # Task Management
         active_tasks: Set[asyncio.Task] = set()
 
-        def cleanup_tasks():
+        async def cleanup_tasks():
             for t in active_tasks: t.cancel()
+            
+            # Auto-shutdown if no clients connected (Native App behavior)
+            # Give a small buffer for page reload
+            await asyncio.sleep(3.0) 
+            # Check number of connected clients. 
+            # Note: app.clients is internal but usable, or we check connection status.
+            # NiceGUI doesn't expose global client count easily in public API without middleware tracking.
+            # But for local app (one user), disconnect usually means exit.
+            # We can use a simple flag or check if new connection came in.
+            
+            # Better way: NiceGUI has native app.shutdown() but only for native mode.
+            # Since we fake native mode, we must call it manually.
+            # We rely on the fact that for a desktop app, closing the only tab means exit.
+            try:
+                # Force shutdown if running as frozen app
+                if getattr(sys, 'frozen', False):
+                    app.shutdown()
+            except:
+                sys.exit(0)
+
         app.on_disconnect(cleanup_tasks)
 
         async def run_safe(coro):
