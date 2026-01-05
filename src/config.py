@@ -1,7 +1,13 @@
 import os
+import sys
 from dotenv import load_dotenv
 
-load_dotenv()
+# Support for bundled .env file in PyInstaller
+if getattr(sys, 'frozen', False):
+    env_path = os.path.join(sys._MEIPASS, '.env')
+    load_dotenv(env_path)
+else:
+    load_dotenv()
 
 class Config:
     # TLU URLs

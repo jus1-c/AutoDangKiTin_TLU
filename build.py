@@ -32,10 +32,11 @@ def build(target_file='main_gui.py'):
         sys.executable, '-m', 'PyInstaller',
         '--name', 'AutoDangKiTin_TLU',
         '--onefile',
-        '--windowed', # Hide console
+        '--windowed',
         '--clean',
         '--add-data', f'{nicegui_path}{sep}nicegui',
-        '--hidden-import', 'webview', # Đảm bảo đóng gói pywebview
+        '--add-data', f'.env{sep}.', # Nhúng file .env vào EXE
+        '--hidden-import', 'webview',
         target_file
     ]
     
