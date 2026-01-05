@@ -27,8 +27,9 @@ def build(target_file='main_gui.py'):
     # 2. Define PyInstaller arguments
     sep = ';' if os.name == 'nt' else ':'
     
+    # Use python -m PyInstaller to avoid PATH issues
     cmd = [
-        'pyinstaller',
+        sys.executable, '-m', 'PyInstaller',
         '--name', 'AutoDangKiTin_TLU',
         '--onefile',
         # '--windowed', 
