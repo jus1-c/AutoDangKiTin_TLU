@@ -1,3 +1,13 @@
+# --- HOTFIX for Python 3.12+ and vbuild/nicegui compatibility ---
+import pkgutil
+import importlib.util
+if not hasattr(pkgutil, 'find_loader'):
+    def find_loader(fullname):
+        spec = importlib.util.find_spec(fullname)
+        return spec.loader if spec else None
+    pkgutil.find_loader = find_loader
+# ----------------------------------------------------------------
+
 from nicegui import ui, app, run
 import asyncio
 import sys
