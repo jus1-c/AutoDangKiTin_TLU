@@ -1,3 +1,13 @@
+# --- HOTFIX for Python 3.12+ and vbuild/nicegui compatibility ---
+import pkgutil
+import importlib.util
+if not hasattr(pkgutil, 'find_loader'):
+    def find_loader(fullname):
+        spec = importlib.util.find_spec(fullname)
+        return spec.loader if spec else None
+    pkgutil.find_loader = find_loader
+# ----------------------------------------------------------------
+
 from nicegui import ui, app, run
 import asyncio
 import sys
@@ -16,7 +26,7 @@ from src.services.calendar_service import CalendarService
 from src.models.course import Course
 from src.core.exceptions import LoginError, NetworkError
 
-# --- 1. Stream Redirector --- 
+# --- 1. Stream Redirector ---
 class UILogger(logging.Handler):
     def __init__(self):
         super().__init__()
@@ -318,7 +328,7 @@ def run_gui():
             with ui.tab_panel(tab_custom):
                 ui.label('Quản lý hồ sơ đăng ký (Lưu trên trình duyệt)').classes('text-h6 mb-2')
                 
-                custom_selections = {}
+                custom_selections = {} 
 
                 with ui.splitter(value=30).classes('w-full h-full border rounded') as splitter:
                     
@@ -381,9 +391,9 @@ def run_gui():
                                 print(f"[ERROR] Run profile failed: {e}")
 
                         async def delete_custom_profile(name):
-                            # Do not await removeItem as it returns void/undefined and causes timeout waiting for result
+                            # Do not await removeItem
                             ui.run_javascript(f'localStorage.removeItem("autotlu_profile_{name}")')
-                            await asyncio.sleep(0.1) # Yield to let JS execute
+                            await asyncio.sleep(0.1) # Yield
                             await refresh_saved_custom_list()
                             ui.notify('Đã xóa hồ sơ', type='info')
 
@@ -400,38 +410,33 @@ def run_gui():
                             creator_container.clear()
                             with creator_container:
                                 with ui.row().classes('w-full items-center mb-4'):
-                                    profile_name_input = ui.input('Tên hồ sơ mới (VD: Sang_Thu_3)').classes('flex-grow mr-2')
+                                    prof_name = ui.input('Tên hồ sơ mới (VD: Sang_Thu_3)').classes('flex-grow mr-2')
                                     
-                                    async def load_courses_for_custom():
+                                    async def load_btn():
                                         if await ensure_courses_loaded():
                                             custom_selections.clear()
                                             update_creator_table()
-                                            ui.notify('Đã tải danh sách môn', type='positive')
-
-                                    ui.button('Load Môn', on_click=load_courses_for_custom).props('outline icon=download')
+                                            ui.notify('Đã tải môn', type='positive')
                                     
-                                    async def save_current_profile():
-                                        name = profile_name_input.value
-                                        if not name:
-                                            ui.notify('Chưa nhập tên hồ sơ!', type='warning')
-                                            return
-                                        if not custom_selections:
-                                            ui.notify('Chưa chọn lớp nào!', type='warning')
+                                    ui.button('Load Môn', on_click=load_btn).props('outline icon=download')
+
+                                    async def save_btn():
+                                        name = prof_name.value
+                                        if not name or not custom_selections:
+                                            ui.notify('Thiếu thông tin!', type='warning')
                                             return
                                         
-                                        final_courses = list(custom_selections.values())
-                                        data_list = [c.data for c in final_courses]
-                                        
-                                        json_str = json.dumps(data_list).replace("'", "\\'")
-                                        ui.run_javascript(f"localStorage.setItem('autotlu_profile_{name}', '{json_str}');")
+                                        data = [c.data for c in custom_selections.values()]
+                                        js_str = json.dumps(data).replace("'", "\\'")
+                                        ui.run_javascript(f"localStorage.setItem('autotlu_profile_{name}', '{js_str}')")
                                         
                                         ui.notify(f'Đã lưu profile: {name}', type='positive')
-                                        profile_name_input.value = ''
+                                        prof_name.value = ''
                                         custom_selections.clear()
                                         update_creator_table()
                                         refresh_saved_custom_list()
 
-                                    ui.button('Lưu Hồ Sơ', on_click=save_current_profile).classes('bg-blue-600')
+                                    ui.button('Lưu Hồ Sơ', on_click=save_btn).classes('bg-blue-600')
 
                                 creator_table = ui.table(
                                     columns=[
@@ -527,26 +532,17 @@ def run_gui():
 
                         render_creator()
 
-            # --- Browser Opening & Token Bridge ---
+            # --- Browser Opening Bridge for Google ---
             pending_url = []
-            pending_google_token = []
-            
-            def open_browser_bridge(url):
+            def browser_cb(url):
                 pending_url.append(url)
-            
-            def google_token_update_bridge(token_json):
-                pending_google_token.append(token_json)
-                
+
             async def check_bridges():
                 if pending_url:
                     url = pending_url.pop(0)
                     ui.notify('Mở trình duyệt xác thực...', type='info')
                     ui.run_javascript(f'window.open("{url}", "_blank")')
-                if pending_google_token:
-                    token = pending_google_token.pop(0)
-                    token_js = token.replace('\\', '\\\\').replace("'", "\'" ).replace('"', '\"')
-                    ui.run_javascript(f"localStorage.setItem('autotlu_google_token', '{token_js}');")
-
+            
             ui.timer(1.0, check_bridges)
 
             # ================= TAB: TIỆN ÍCH =================
@@ -596,8 +592,8 @@ def run_gui():
                                     calendar_service.sync_to_google, 
                                     events, 
                                     initial_token=token_json,
-                                    on_token_update=google_token_update_bridge,
-                                    browser_callback=open_browser_bridge
+                                    on_token_update=None, # No saving back to local for now or use bridge if needed
+                                    browser_callback=browser_cb
                                 )
                                 
                                 ui.notify('Đồng bộ thành công!', type='positive')
@@ -638,18 +634,8 @@ def run_gui():
                 while is_sniffing and targets:
                     print(f"Đang thử lại {len(targets)} môn...")
                     
-                    # Manual retry wrapper
-                    # Need to access register_single_subject logic
-                    # Since register_service is stateless, we can call it.
-                    # But we need result. RegisterService doesn't expose single wrapper nicely in src.
-                    # We will use register_single_subject directly from service if possible or burst request
-                    
                     tasks = []
                     url = user.register_summer_url if is_summer_sem else user.register_url
-                    
-                    # We need a way to know which specific course succeeded.
-                    # RegisterService.register_single_subject returns Bool.
-                    # We need to wrap it.
                     
                     async def attempt(c):
                         success = await register_service.register_single_subject(url, [c], [])
@@ -689,9 +675,9 @@ def run_gui():
         async def logout():
             global user
             user = None
-            stop_sniffing() # Stop on logout
+            stop_sniffing()
             update_tabs_state()
-            tabs.value = tab_login
+            tabs.value = t_login
             ui.notify('Đã đăng xuất')
             ui.run_javascript("localStorage.removeItem('autotlu_creds');")
 
