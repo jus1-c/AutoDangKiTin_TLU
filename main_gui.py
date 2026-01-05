@@ -13,14 +13,11 @@ if not hasattr(pkgutil, 'find_loader'):
 # --- HOTFIX for pythonnet/pywebview in frozen mode ---
 if getattr(sys, 'frozen', False):
     # Try to locate python dll
-    # Usually in the same folder as executable or sys._MEIPASS
     dll_name = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
-    # Check sys._MEIPASS first (onefile mode temp dir)
     base_path = sys._MEIPASS
     dll_path = os.path.join(base_path, dll_name)
     
     if not os.path.exists(dll_path):
-        # Fallback to executable dir
         dll_path = os.path.join(os.path.dirname(sys.executable), dll_name)
         
     if os.path.exists(dll_path):
@@ -30,19 +27,14 @@ if getattr(sys, 'frozen', False):
 # Explicitly import webview to ensure PyInstaller bundles it
 try:
     import webview
-    # Force Edge Chromium (WebView2) to avoid pythonnet/WinForms dependency issues
-    import os
+    # Force Edge Chromium (WebView2)
     os.environ["PYWEBVIEW_GUI"] = "edgechromium"
     
     # --- Monkey Patch for pywebview >= 5.0 'frameless' error ---
-    # NiceGUI passes 'frameless' which might be removed/renamed in newer pywebview
     original_create_window = webview.create_window
     
     def patched_create_window(*args, **kwargs):
         if 'frameless' in kwargs:
-            # Map 'frameless' to 'easy_drag' (closest alternative) or just pop it
-            # In v5, frameless is often handled via easy_drag=False/True logic or text_select
-            # Let's just remove it to be safe
             kwargs.pop('frameless')
         return original_create_window(*args, **kwargs)
         
@@ -54,7 +46,6 @@ except ImportError:
 
 from nicegui import ui, app, run
 import asyncio
-import sys
 import json
 import logging
 from datetime import datetime, timedelta
@@ -372,7 +363,7 @@ def run_gui():
             with ui.tab_panel(tab_custom):
                 ui.label('Quản lý hồ sơ đăng ký (Lưu trên trình duyệt)').classes('text-h6 mb-2')
                 
-                custom_selections = {} 
+                custom_selections = {}
 
                 with ui.splitter(value=30).classes('w-full h-full border rounded') as splitter:
                     
@@ -471,7 +462,7 @@ def run_gui():
                                             return
                                         
                                         data = [c.data for c in custom_selections.values()]
-                                        js_str = json.dumps(data).replace("'", "\\'")
+                                        js_str = json.dumps(data).replace("'", "\'")
                                         ui.run_javascript(f"localStorage.setItem('autotlu_profile_{name}', '{js_str}')")
                                         
                                         ui.notify(f'Đã lưu profile: {name}', type='positive')
@@ -597,8 +588,6 @@ def run_gui():
                     with ui.card().classes('w-64 p-4 text-center cursor-pointer hover:shadow-lg transition'):
                         ui.icon('calendar_today', size='4em').classes('text-blue-500 mx-auto')
                         ui.label('Xuất File .ICS').classes('font-bold text-lg mt-2')
-                        ui.label('Dùng cho Calendar, Outlook...').classes('text-sm text-gray-500')
-                        
                         async def do_export():
                             if not user: 
                                 ui.notify('Chưa đăng nhập!', type='warning')
@@ -617,16 +606,9 @@ def run_gui():
                     with ui.card().classes('w-64 p-4 text-center cursor-pointer hover:shadow-lg transition'):
                         ui.icon('sync', size='4em').classes('text-green-500 mx-auto')
                         ui.label('Đồng bộ Google Calendar').classes('font-bold text-lg mt-2')
-                        ui.label('Tự động thêm vào GG Calendar').classes('text-sm text-gray-500')
-                        
                         async def do_google_sync():
-                            if not user:
-                                ui.notify('Chưa đăng nhập!', type='warning')
-                                return
-                            
-                            tabs.value = tab_logs 
-                            print("\n--- BẮT ĐẦU ĐỒNG BỘ GOOGLE CALENDAR ---")
-                            
+                            tabs.value = tab_logs
+                            print("\n--- GOOGLE SYNC ---")
                             try:
                                 # 1. Get token from LocalStorage
                                 token_json = await ui.run_javascript("return localStorage.getItem('autotlu_google_token');", timeout=5.0)
@@ -656,7 +638,6 @@ def run_gui():
                     lbl_sniff = ui.label('Đang săn môn (Sniffing)...').classes('font-bold text-green-500 mr-4')
                     ui.button('DỪNG LẠI (STOP)', on_click=lambda: stop_sniffing()).classes('bg-red-600')
 
-                ui.label('Logs').classes('text-h6')
                 log_box = ui.log(max_lines=5000).classes('w-full h-96 bg-gray-900 text-green-400 font-mono p-2')
                 ui_logger.set_element(log_box)
                 ui.button('Xóa logs', on_click=log_box.clear)
@@ -721,7 +702,7 @@ def run_gui():
             user = None
             stop_sniffing()
             update_tabs_state()
-            tabs.value = t_login
+            tabs.value = tab_login
             ui.notify('Đã đăng xuất')
             ui.run_javascript("localStorage.removeItem('autotlu_creds');")
 
