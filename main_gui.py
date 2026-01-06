@@ -160,7 +160,7 @@ def run_gui():
         with ui.tabs().classes('w-full shadow-sm sticky top-0 bg-white z-10') as tabs:
             tab_login = ui.tab('Đăng nhập', icon='login')
             tab_register = ui.tab('Đăng ký Nhanh', icon='flash_on')
-            tab_custom = ui.tab('Custom (Local)', icon='save')
+            tab_custom = ui.tab('Custom', icon='save')
             tab_utils = ui.tab('Tiện ích', icon='build')
             tab_logs = ui.tab('Logs', icon='terminal')
 
@@ -357,7 +357,7 @@ def run_gui():
 
             # ================= TAB: CUSTOM (LOCAL) =================
             with ui.tab_panel(tab_custom):
-                ui.label('Quản lý hồ sơ đăng ký (Lưu trên trình duyệt)').classes('text-h6 mb-2')
+                ui.label('Quản lý hồ sơ đăng ký').classes('text-h6 mb-2')
                 
                 custom_selections = {} 
 
