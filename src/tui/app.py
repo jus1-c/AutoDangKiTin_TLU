@@ -226,9 +226,15 @@ class LoginScreen(ModalScreen[Optional[User]]):
         Binding("ctrl+c", "cancel", "Hủy", show=False),
     ]
 
-    def __init__(self, default_user: Optional[str] = None, default_save: bool = True):
+    def __init__(
+        self,
+        default_user: Optional[str] = None,
+        default_save: bool = True,
+        default_password: Optional[str] = None,
+    ):
         super().__init__()
         self._default_user = default_user or ""
+        self._default_password = default_password or ""
         self._default_save = default_save
 
     def compose(self) -> ComposeResult:
@@ -237,7 +243,12 @@ class LoginScreen(ModalScreen[Optional[User]]):
             yield Label("Mã sinh viên:")
             yield Input(value=self._default_user, id="username", placeholder="Mã sinh viên")
             yield Label("Mật khẩu:")
-            yield Input(password=True, id="password", placeholder="Mật khẩu")
+            yield Input(
+                value=self._default_password,
+                password=True,
+                id="password",
+                placeholder="Mật khẩu",
+            )
             with Horizontal(id="save-login-row"):
                 yield ToggleSwitch(value=self._default_save, id="save-login")
                 yield Label("Lưu đăng nhập cho lần sau")
@@ -966,14 +977,18 @@ class TLUApp(App):
 
     def _do_login(self) -> None:
         default_user = None
+        default_password = None
         default_save = True
         if os.path.exists(Config.LOGIN_FILE):
             try:
                 with open(Config.LOGIN_FILE, "r", encoding="utf-8") as f:
-                    default_user = json.load(f).get("username")
+                    saved = json.load(f)
+                default_user = saved.get("username")
+                default_password = saved.get("password")
                 default_save = True
             except Exception:
                 default_user = None
+                default_password = None
                 default_save = True
         else:
             default_save = False
@@ -994,7 +1009,10 @@ class TLUApp(App):
             }
             self.push_screen(MenuScreen(user, self.services))
 
-        self.push_screen(LoginScreen(default_user, default_save), _on_login)
+        self.push_screen(
+            LoginScreen(default_user, default_save, default_password),
+            _on_login,
+        )
 
 
 def run_tui() -> None:
