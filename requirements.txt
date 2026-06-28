@@ -4,5 +4,6 @@ httpx==0.28.1
 protobuf==6.32.0
 python-dotenv==1.0.0
 ics==0.7.2
+tatsu<5.12
 textual>=0.80
 typer>=0.12

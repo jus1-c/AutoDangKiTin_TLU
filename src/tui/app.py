@@ -778,11 +778,11 @@ class TLUApp(App):
         self.client: Optional[TLUClient] = None
         self.services: dict = {}
 
-    async def on_mount(self) -> None:
+    def on_mount(self) -> None:
         self.title = "AutoDangKiTin TLU"
-        await self._do_login()
+        self._do_login()
 
-    async def _do_login(self) -> None:
+    def _do_login(self) -> None:
         default_user = None
         if os.path.exists(Config.LOGIN_FILE):
             try:
@@ -790,27 +790,24 @@ class TLUApp(App):
                     default_user = json.load(f).get("username")
             except Exception:
                 default_user = None
-        result = await self.push_screen_wait(LoginScreen(default_user))
-        if not result:
-            self.exit()
-            return
-        self.client = result["client"]
-        user: User = result["user"]
-        self.services = {
-            "client": self.client,
-            "auth": AuthService(self.client),
-            "course": CourseService(self.client),
-            "register": RegisterService(self.client),
-            "calendar": CalendarService(self.client),
-            "custom": CustomService(),
-        }
-        await self.push_screen_wait(MenuScreen(user, self.services))
-        # user popped back to this base screen (logout handled by MenuScreen.action_logout)
-        try:
-            await self.client.close()
-        except Exception:
-            pass
-        self.exit()
+
+        def _on_login(result) -> None:
+            if not result:
+                self.exit()
+                return
+            self.client = result["client"]
+            user: User = result["user"]
+            self.services = {
+                "client": self.client,
+                "auth": AuthService(self.client),
+                "course": CourseService(self.client),
+                "register": RegisterService(self.client),
+                "calendar": CalendarService(self.client),
+                "custom": CustomService(),
+            }
+            self.push_screen(MenuScreen(user, self.services))
+
+        self.push_screen(LoginScreen(default_user), _on_login)
 
 
 def run_tui() -> None:
