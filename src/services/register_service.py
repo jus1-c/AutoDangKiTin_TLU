@@ -13,7 +13,8 @@ StopFn = Callable[[], bool]
 class RegisterService:
     def __init__(self, client: TLUClient):
         self.client = client
-        self.semaphore = asyncio.Semaphore(Config.CONCURRENCY_LIMIT)
+        self._semaphore_limit = Config.CONCURRENCY_LIMIT
+        self.semaphore = asyncio.Semaphore(self._semaphore_limit)
 
     async def register_subjects(self, user: User, subject_indices: List[int], all_courses: List[List[Course]], is_summer: bool = False) -> List[Course]:
         """
@@ -70,13 +71,21 @@ class RegisterService:
             failed_list.append(courses[0])
         return False
 
-    async def _burst_request(self, url: str, data: dict, count: int = 5) -> bool:
-        tasks = [self._send_register_request(url, data) for _ in range(count)]
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        """Rebuild semaphore if Config.CONCURRENCY_LIMIT changed at runtime."""
+        if self._semaphore_limit != Config.CONCURRENCY_LIMIT:
+            self._semaphore_limit = Config.CONCURRENCY_LIMIT
+            self.semaphore = asyncio.Semaphore(self._semaphore_limit)
+        return self.semaphore
+
+    async def _burst_request(self, url: str, data: dict, count: Optional[int] = None) -> bool:
+        n = count if count is not None else Config.BURST_COUNT
+        tasks = [self._send_register_request(url, data) for _ in range(n)]
         results = await asyncio.gather(*tasks)
         return any(results)
 
     async def _send_register_request(self, url: str, data: dict) -> bool:
-        async with self.semaphore:
+        async with self._get_semaphore():
             while True:
                 try:
                     response = await self.client.request("POST", url, json=data)
