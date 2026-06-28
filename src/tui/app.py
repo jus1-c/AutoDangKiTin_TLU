@@ -541,7 +541,7 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
         # folded into the marker column to save space.
         table.add_column("✓ N/M", width=7, key="col-pick")
         table.add_column("Tên lớp", width=24, key="col-name")
-        table.add_column("Lịch (T2:1-3, T4:4-6)", width=20, key="col-lich")
+        table.add_column("Lịch", width=20, key="col-lich")
         table.add_column("GV", width=22, key="col-gv")
         cursor_target = 0
         for i, opt in enumerate(self.options):
