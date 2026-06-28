@@ -11,12 +11,34 @@ from src.models.user import User
 _FALLBACK_MAIN_ID = 66
 _FALLBACK_SUMMER_ID = 78
 
-# Keywords that identify a SUMMER semester specifically.
-# NOTE: "phụ" (supplementary) is INTENTIONALLY excluded — in TLU data,
+# Patterns that identify a SUMMER semester specifically.
+# "phụ" (supplementary) is INTENTIONALLY excluded — in TLU data,
 # "Học kỳ phụ" (supplementary, ID 72) is NOT the same as
-# "Học kỳ hè" (summer, ID 78). Including "phụ" would make the
-# detector pick supplementary as summer.
+# "Học kỳ hè" (summer, ID 78).
 _SUMMER_NAME_KEYWORDS = ("hè", "he ", "summer", "he,")
+
+# Patterns that identify NON-semester periods (excluded entirely
+# from summer detection). In the live TLU API these appear alongside
+# real semesters:
+#   70  Tiếng Anh tăng cường
+#   73  Học phần tốt nghiệp
+#   71  Chuẩn đầu ra ngoại ngữ
+#   67  Ôn thi Chuẩn đầu ra ngoại ngữ
+#   69  Chuẩn đầu ra ngoại ngữ - Đợt 2
+#   68  Ôn thi Chuẩn đầu ra ngoại ngữ - Đợt 2
+#   75  Kiểm tra Tiếng Anh đầu vào
+#   76  Giáo dục quốc phòng và An ninh
+#   77  Kiểm tra Tiếng Anh đầu vào - Đợt 2
+_NON_SEMESTER_EXCLUDE = (
+    "tiếng anh",
+    "ôn thi",
+    "kiểm tra",
+    "học phần tốt nghiệp",
+    "tốt nghiệp",
+    "chuẩn đầu ra",
+    "quốc phòng",
+    "an ninh",
+)
 
 # Months (1-12) that indicate a summer-semester startDate
 _SUMMER_MONTHS = (4, 5, 6, 7, 8)  # Apr–Aug
@@ -73,6 +95,15 @@ class AuthService:
             return None
 
     @staticmethod
+    def _is_non_semester(name: str) -> bool:
+        """Check if a period name belongs to a non-semester group
+        (English enhancement, exam prep, graduation, etc.) that
+        happens to live in the same API endpoint.
+        """
+        n = name.lower()
+        return any(pat in n for pat in _NON_SEMESTER_EXCLUDE)
+
+    @staticmethod
     def _find_semester_id(
         periods: List[dict],
         *,
@@ -84,8 +115,9 @@ class AuthService:
         """Find a semester period matching the given heuristics.
 
         Tries strategies in order:
-          1. Name contains any of `name_keywords` (case-insensitive)
-          2. startDate month in `start_months`
+          1. Name contains any of `name_keywords` (case-insensitive),
+             excluding non-semester periods (English, exams, etc.)
+          2. startDate month in `start_months`, excluding non-semesters
           3. If `prefer_after` given: a period whose startDate is strictly
              after the given period's startDate
         Skips any period whose id is in `exclude_ids`.
@@ -95,7 +127,12 @@ class AuthService:
             return None
 
         def _eligible(p: dict) -> bool:
-            return p.get("id") not in exclude_ids
+            if p.get("id") in exclude_ids:
+                return False
+            name = str(p.get("name", ""))
+            if AuthService._is_non_semester(name):
+                return False
+            return True
 
         # 1. Name match
         for p in periods:
@@ -145,7 +182,8 @@ class AuthService:
         # ---- Main semester ----
         # Prefer the exact match for the known fallback ID; otherwise
         # pick the period that started most recently (i.e. the one that
-        # is currently or most-nearly active).
+        # is currently or most-nearly active), excluding non-semester
+        # groups (English, exams, etc.) that share the same endpoint.
         user.semester_id = _FALLBACK_MAIN_ID
         if not any(p.get("id") == _FALLBACK_MAIN_ID for p in periods):
             if periods:
@@ -153,26 +191,34 @@ class AuthService:
                 with_dates = [
                     p for p in periods
                     if isinstance(p.get("startDate"), (int, float))
+                    and not self._is_non_semester(str(p.get("name", "")))
                 ]
                 if with_dates:
-                    # Prefer periods that have already started; among those,
-                    # pick the one with the latest startDate (= the one that
-                    # is currently or most-nearly active).
                     started = [p for p in with_dates if p["startDate"] <= now_ms]
                     pool = started or with_dates
                     user.semester_id = max(pool, key=lambda x: x["startDate"]).get("id")
                     print(f"[INFO] Main semester auto-detected (latest start): {user.semester_id}")
                 else:
-                    user.semester_id = periods[0].get("id")
-                    print(f"[WARNING] No startDate in periods, fallback to index 0: {user.semester_id}")
+                    # No usable startDate — pick first non-semester period
+                    for p in periods:
+                        if not self._is_non_semester(str(p.get("name", ""))):
+                            user.semester_id = p.get("id")
+                            print(f"[INFO] Main semester fallback (no dates): {user.semester_id}")
+                            break
+                    else:
+                        user.semester_id = _FALLBACK_MAIN_ID
+                        print(f"[WARNING] No main semester found, using fallback: {user.semester_id}")
 
         # ---- Summer semester ----
         # Strategy (in order):
-        #   a. Exact match for known fallback ID (72)
-        #   b. Period name contains a summer keyword (hè/phụ/summer/...)
+        #   a. Exact match for known fallback ID (78)
+        #   b. Period name contains a summer keyword (hè/summer/...)
         #   c. Period whose startDate month is in Apr–Aug
         #   d. Period that starts strictly after the chosen main semester
-        #   e. Second period in the list
+        #   e. "Học kỳ phụ" (supplementary) as last live fallback
+        #   f. Hardcoded fallback ID
+        # Non-semester periods (English, exams, ...) are excluded
+        # throughout by _find_semester_id.
         summer_id: Optional[int] = None
         if any(p.get("id") == _FALLBACK_SUMMER_ID for p in periods):
             summer_id = _FALLBACK_SUMMER_ID
@@ -201,10 +247,16 @@ class AuthService:
                     if summer_id is not None:
                         print(f"[INFO] Summer semester = period after main: {summer_id}")
 
-            # Last resort: second period
-            if summer_id is None and len(periods) >= 2:
-                summer_id = periods[1].get("id")
-                print(f"[WARNING] Summer semester fallback to index 1: {summer_id}")
+            # Last live fallback: try "Học kỳ phụ" specifically
+            # (supplementary can sometimes be used for summer-like courses)
+            if summer_id is None:
+                for p in periods:
+                    name = str(p.get("name", "")).lower()
+                    if "phụ" in name or "phu" in name:
+                        if p.get("id") != user.semester_id:
+                            summer_id = p.get("id")
+                            print(f"[INFO] Summer semester = 'phụ' fallback: {summer_id}")
+                            break
 
         if summer_id is not None:
             user.semester_summer_id = summer_id
