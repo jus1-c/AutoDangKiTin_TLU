@@ -3,12 +3,17 @@ AutoDangKiTin TLU - Textual TUI
 
 Async-native terminal interface (replaces the hand-rolled ANSI TUI).
 
-Use cases (5):
-  1. Đăng ký nhanh        — multi-select → burst register → auto-sniff fails
-  2. Sniffing riêng       — chọn môn săn → vòng GET-gated check-then-register
-  3. Custom profile       — quản lý hồ sơ JSON (res/custom/*.json)
+Menu (5 items + 2 footer buttons):
+  1. Đăng ký nhanh        — multi-select (SelectionList) → burst register
+                              → auto-sniff fails if AUTO_SNIFF_FALLBACK on
+  2. Tạo danh sách custom — chọn lớp, lớp trùng lịch bị xám + không pick,
+                              lưu file res/custom/{name}.json
+                              (tên rỗng → custom_{time}.json)
+  3. Đăng ký theo profile — load file JSON đã lưu → đăng ký
   4. Lịch                 — export ICS + sync Google Calendar
-  5. Settings             — debug, interval sniff, đăng xuất
+  5. Settings             — debug, interval, jitter, fallback toggle,
+                              burst count, concurrency, đăng xuất
+  [Thoát]  [Đăng xuất]    — Thoát giữ session, Đăng xuất xóa token
 
 Stdout capture: `LogCapture` redirect sys.stdout -> RichLog widget during
 worker execution so existing `print()` in services keep working unchanged
@@ -21,11 +26,13 @@ import contextlib
 import json
 import os
 import sys
-from typing import Any, Awaitable, Callable, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
+from rich.text import Text as RichText
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal
+from textual.containers import Container, Horizontal, VerticalScroll
+from textual.reactive import reactive
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
@@ -35,8 +42,10 @@ from textual.widgets import (
     Input,
     Label,
     RichLog,
+    SelectionList,
     Static,
 )
+from textual.widgets.selection_list import Selection
 
 from src.config import Config
 from src.core.client import TLUClient
@@ -97,10 +106,6 @@ def capture_stdout(log_widget: RichLog):
 # ---------- custom toggle switch ----------
 
 
-from rich.text import Text as RichText
-from textual.reactive import reactive
-
-
 class ToggleSwitch(Static, can_focus=True):
     """iOS-style toggle: circle slides left (off) or right (on), track
     changes color. Click to toggle. No animation glitches.
@@ -125,11 +130,8 @@ class ToggleSwitch(Static, can_focus=True):
 
     def render(self) -> RichText:
         if self.value:
-            # ON: █░░ (full on LEFT, 2 empty) — green
             return RichText("█░░", style="#a6da95")
-        else:
-            # OFF: ░░█ (2 empty, full on RIGHT) — gray
-            return RichText("░░█", style="#5b6078")
+        return RichText("░░█", style="#5b6078")
 
     def watch_value(self, value: bool) -> None:
         self.refresh()
@@ -221,7 +223,7 @@ class LogCaptureContext:
 # ---------- login screen ----------
 
 
-class LoginScreen(ModalScreen[Optional[User]]):
+class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
     BINDINGS = [
         Binding("ctrl+c", "cancel", "Hủy", show=False),
     ]
@@ -308,12 +310,10 @@ class LoginScreen(ModalScreen[Optional[User]]):
 class MenuScreen(Screen):
     BINDINGS = [
         Binding("1", "register", "Đăng ký nhanh"),
-        Binding("2", "sniff", "Sniffing"),
-        Binding("3", "custom", "Custom"),
+        Binding("2", "builder", "Tạo custom"),
+        Binding("3", "profile", "Đăng ký profile"),
         Binding("4", "calendar", "Lịch"),
         Binding("5", "settings", "Settings"),
-        Binding("0", "logout", "Đăng xuất"),
-        Binding("q", "logout", "Thoát"),
     ]
 
     def __init__(self, user: User, services: dict):
@@ -329,11 +329,14 @@ class MenuScreen(Screen):
                 id="menu-greet",
             )
             yield Label("Chọn chức năng (phím số) hoặc click nút:", id="menu-hint")
-            yield Button("1. Đăng ký nhanh (theo danh sách)", id="b1", variant="primary")
-            yield Button("2. Sniffing riêng (săn môn fail)", id="b2", variant="warning")
-            yield Button("3. Custom profile (hồ sơ JSON)", id="b3")
+            yield Button("1. Đăng ký nhanh (chọn nhiều môn)", id="b1", variant="primary")
+            yield Button("2. Tạo danh sách custom", id="b2", variant="warning")
+            yield Button("3. Đăng ký theo profile", id="b3")
             yield Button("4. Lịch (ICS / Google)", id="b4")
-            yield Button("5. Settings (debug, interval, đăng xuất)", id="b5")
+            yield Button("5. Settings", id="b5")
+            with Horizontal(id="menu-footer"):
+                yield Button("Thoát", id="exit-btn", variant="default")
+                yield Button("Đăng xuất", id="logout-btn", variant="error")
         yield Footer()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -341,22 +344,32 @@ class MenuScreen(Screen):
         if bid == "b1":
             self.app.push_screen(RegisterScreen(self.user, self.services))
         elif bid == "b2":
-            self.app.push_screen(SniffScreen(self.user, self.services))
+            self.app.push_screen(CustomBuilderScreen(self.user, self.services))
         elif bid == "b3":
-            self.app.push_screen(CustomScreen(self.user, self.services))
+            self.app.push_screen(ProfileScreen(self.user, self.services))
         elif bid == "b4":
             self.app.push_screen(CalendarScreen(self.user, self.services))
         elif bid == "b5":
             self.app.push_screen(SettingsScreen(self.services))
+        elif bid == "exit-btn":
+            self.app.exit()
+        elif bid == "logout-btn":
+            for f in (Config.TOKEN_FILE, Config.LOGIN_FILE, Config.GOOGLE_TOKEN_FILE):
+                try:
+                    if os.path.exists(f):
+                        os.remove(f)
+                except Exception:
+                    pass
+            self.app.exit()
 
     def action_register(self) -> None:
         self.app.push_screen(RegisterScreen(self.user, self.services))
 
-    def action_sniff(self) -> None:
-        self.app.push_screen(SniffScreen(self.user, self.services))
+    def action_builder(self) -> None:
+        self.app.push_screen(CustomBuilderScreen(self.user, self.services))
 
-    def action_custom(self) -> None:
-        self.app.push_screen(CustomScreen(self.user, self.services))
+    def action_profile(self) -> None:
+        self.app.push_screen(ProfileScreen(self.user, self.services))
 
     def action_calendar(self) -> None:
         self.app.push_screen(CalendarScreen(self.user, self.services))
@@ -364,17 +377,8 @@ class MenuScreen(Screen):
     def action_settings(self) -> None:
         self.app.push_screen(SettingsScreen(self.services))
 
-    def action_logout(self) -> None:
-        for f in (Config.TOKEN_FILE, Config.LOGIN_FILE, Config.GOOGLE_TOKEN_FILE):
-            try:
-                if os.path.exists(f):
-                    os.remove(f)
-            except Exception:
-                pass
-        self.app.exit()
 
-
-# ---------- register screen ----------
+# ---------- register screen (multi-select) ----------
 
 
 class RegisterScreen(Screen):
@@ -387,82 +391,73 @@ class RegisterScreen(Screen):
         self.user = user
         self.services = services
         self.courses: List[List[Course]] = []
-        self.names: List[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Container():
             yield Label("ĐĂNG KÝ NHANH", id="reg-title")
-            with Horizontal():
+            with Horizontal(id="reg-toolbar"):
                 yield ToggleSwitch(id="summer", value=False)
                 yield Label("Học kỳ hè")
                 yield Button("Tải danh sách môn", id="load", variant="primary")
+                yield Button("Chọn tất cả", id="select-all")
+                yield Button("Bỏ chọn", id="deselect-all")
                 yield Button("Đăng ký môn đã chọn", id="run", variant="success")
                 yield Button("Quay lại", id="back")
-            yield DataTable(id="courses-table", zebra_stripes=True, cursor_type="row")
+            yield SelectionList[int](id="reg-selection")
         yield Footer()
-
-    def on_mount(self) -> None:
-        table = self.query_one("#courses-table", DataTable)
-        table.add_columns("STT", "Tên môn", "Mã", "Lớp đầu", "Sĩ số")
 
     def _is_summer(self) -> bool:
         return self.query_one("#summer", ToggleSwitch).value
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "back":
+        bid = event.button.id
+        if bid == "back":
             self.app.pop_screen()
-        elif event.button.id == "load":
+            return
+        if bid == "load":
             await self._load_courses()
-        elif event.button.id == "run":
-            await self._run_sniff()
+            return
+        if bid == "select-all":
+            self.query_one(SelectionList).select_all()
+            return
+        if bid == "deselect-all":
+            self.query_one(SelectionList).deselect_all()
+            return
+        if bid == "run":
+            await self._run_register()
 
     def action_back(self) -> None:
         self.app.pop_screen()
 
     async def _load_courses(self) -> None:
-        table = self.query_one("#courses-table", DataTable)
-        table.clear()
+        sel: SelectionList = self.query_one(SelectionList)
+        sel.clear_options()
+        self.courses = []
         is_summer = self._is_summer()
-        sem_id = (
-            self.user.semester_summer_id if is_summer else self.user.semester_id
-        )
-        url = (
-            self.user.course_summer_url if is_summer else self.user.course_url
-        )
-        print(
-            f"[UI] Load courses: summer={is_summer}, "
-            f"semester_id={sem_id}, url={url}"
-        )
         try:
-            self.courses, self.names = await self.services["course"].fetch_courses(
+            self.courses, names = await self.services["course"].fetch_courses(
                 self.user, is_summer
             )
-            for i, name in enumerate(self.names):
+            for i, name in enumerate(names):
                 if not self.courses[i]:
                     continue
                 c = self.courses[i][0]
-                table.add_row(
-                    str(i),
-                    name,
-                    c.code,
-                    c.display_name,
-                    f"{c.current_students}/{c.max_students}",
-                    key=str(i),
+                label = (
+                    f"{i:>3}. {name[:40]:<40}  "
+                    f"[{c.code}]  {c.current_students}/{c.max_students}"
                 )
+                sel.add_option(Selection(label, i))
         except Exception as e:  # noqa: BLE001
             self.notify(f"Lỗi tải môn: {e}", severity="error")
             print(f"[UI] Load courses FAILED: {e}")
 
     async def _run_register(self) -> None:
-        table = self.query_one("#courses-table", DataTable)
-        cursor_row = table.cursor_row
-        if cursor_row is None or cursor_row < 0 or not self.courses:
+        sel: SelectionList = self.query_one(SelectionList)
+        indices = list(sel.selected)
+        if not indices or not self.courses:
             self.notify("Chưa chọn môn hoặc chưa tải dữ liệu.", severity="warning")
             return
-        if cursor_row >= len(self.courses):
-            return
-        indices = [cursor_row]
 
         log_screen = LogScreen("Đăng ký nhanh")
         self.app.push_screen(log_screen)
@@ -473,26 +468,157 @@ class RegisterScreen(Screen):
                 failed = await register.register_subjects(
                     self.user, indices, self.courses, self._is_summer()
                 )
-                if failed and not ctx.should_stop():
+                if failed and Config.AUTO_SNIFF_FALLBACK and not ctx.should_stop():
                     ctx.log(f"[AUTO] {len(failed)} môn fail -> chuyển sang sniffing.")
-                    register.sniffing_loop(
+                    await register.sniffing_loop(
                         self.user,
                         failed,
                         self._is_summer(),
                         interval=Config.SNIFF_INTERVAL,
+                        jitter=Config.SNIFF_JITTER,
                         on_log=ctx.log,
                         should_stop=ctx.should_stop,
                     )
+                elif failed and not Config.AUTO_SNIFF_FALLBACK:
+                    ctx.log(f"[INFO] {len(failed)} môn fail. Tự fallback đã TẮT trong Settings.")
             except Exception as e:  # noqa: BLE001
                 ctx.log(f"[ERROR] {e}")
 
         log_screen.run_async(_work)
 
 
-# ---------- sniff screen ----------
+# ---------- class picker modal (conflict-grey) ----------
 
 
-class SniffScreen(Screen):
+class ClassPickerScreen(ModalScreen[Optional[Course]]):
+    """Modal that lets the user pick one class for a subject.
+    Classes that conflict (in timetable) with the user's other
+    selected classes are shown greyed out with a 'TRÙNG LỊCH' label
+    and cannot be picked. Mirrors the old GUI behavior (main_gui.py).
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Hủy"),
+    ]
+
+    def __init__(self, subject_name: str, options: List[Course],
+                 other_selected: List[Course], current: Optional[Course] = None):
+        super().__init__()
+        self.subject_name = subject_name
+        self.options = options
+        self.other_selected = other_selected
+        self.current = current
+
+    def compose(self) -> ComposeResult:
+        with Container(id="picker-container"):
+            yield Label(f"Chọn lớp cho: {self.subject_name}", id="picker-title")
+            with VerticalScroll(id="picker-scroll"):
+                yield Static("", id="picker-list")
+            with Horizontal(id="picker-buttons"):
+                yield Button("Đóng", id="close-btn", variant="default")
+
+    def on_mount(self) -> None:
+        self._render_options()
+
+    def _render_options(self) -> None:
+        host = self.query_one("#picker-list", Static)
+        lines: List[RichText] = []
+        for opt in self.options:
+            conflict = any(opt.conflicts_with(o) for o in self.other_selected)
+            chosen = opt == self.current
+            if conflict:
+                line = RichText(
+                    f"  ✗  {opt.display_name}  "
+                    f"[{opt.current_students}/{opt.max_students}]  "
+                    f"— TRÙNG LỊCH",
+                    style="#5b6078 dim italic",
+                )
+            elif chosen:
+                line = RichText(
+                    f"  ●  {opt.display_name}  "
+                    f"[{opt.current_students}/{opt.max_students}]  "
+                    f"— đang chọn",
+                    style="#a6da95 bold",
+                )
+            else:
+                line = RichText(
+                    f"  ○  {opt.display_name}  "
+                    f"[{opt.current_students}/{opt.max_students}]  "
+                    f"— nhấn Enter để chọn",
+                    style="#cad3f5",
+                )
+            lines.append(line)
+            lines.append(RichText(""))
+        host.update(RichText("\n").join(lines))
+
+    def on_key(self, event) -> None:
+        if event.key in ("up", "down", "j", "k", "enter"):
+            # Hand-off to selection logic
+            self._handle_nav(event.key)
+
+    def _handle_nav(self, key: str) -> None:
+        # Stateful index for the picker
+        if not hasattr(self, "_idx"):
+            self._idx = 0
+        if key == "down" or key == "j":
+            self._idx = (self._idx + 1) % len(self.options)
+            self._refresh_cursor()
+        elif key == "up" or key == "k":
+            self._idx = (self._idx - 1) % len(self.options)
+            self._refresh_cursor()
+        elif key == "enter":
+            opt = self.options[self._idx]
+            if not any(opt.conflicts_with(o) for o in self.other_selected):
+                self.dismiss(opt)
+
+    def _refresh_cursor(self) -> None:
+        # Re-render with the new cursor index
+        host = self.query_one("#picker-list", Static)
+        lines: List[RichText] = []
+        for i, opt in enumerate(self.options):
+            conflict = any(opt.conflicts_with(o) for o in self.other_selected)
+            chosen = opt == self.current
+            if conflict:
+                line = RichText(
+                    f"  ✗  {opt.display_name}  "
+                    f"[{opt.current_students}/{opt.max_students}]  "
+                    f"— TRÙNG LỊCH",
+                    style="#5b6078 dim italic",
+                )
+            elif chosen or i == self._idx:
+                style = "#f5a97f bold" if i == self._idx else "#a6da95 bold"
+                marker = "▸" if i == self._idx else "●"
+                line = RichText(
+                    f"  {marker}  {opt.display_name}  "
+                    f"[{opt.current_students}/{opt.max_students}]",
+                    style=style,
+                )
+            else:
+                line = RichText(
+                    f"  ○  {opt.display_name}  "
+                    f"[{opt.current_students}/{opt.max_students}]",
+                    style="#cad3f5",
+                )
+            lines.append(line)
+            lines.append(RichText(""))
+        host.update(RichText("\n").join(lines))
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close-btn":
+            self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+# ---------- custom builder screen ----------
+
+
+class CustomBuilderScreen(Screen):
+    """Build a custom course list with conflict detection (class picker
+    greys out conflicting options). Save as JSON to res/custom/.
+    """
+
     BINDINGS = [
         Binding("escape", "back", "Quay lại"),
     ]
@@ -501,106 +627,143 @@ class SniffScreen(Screen):
         super().__init__()
         self.user = user
         self.services = services
+        self.custom: CustomService = services["custom"]
         self.courses: List[List[Course]] = []
         self.names: List[str] = []
+        self.selections: Dict[int, Course] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Container():
-            yield Label("SNIFFING RIÊNG", id="sniff-title")
-            with Horizontal():
+            yield Label("TẠO DANH SÁCH CUSTOM", id="builder-title")
+            with Horizontal(id="builder-toolbar"):
                 yield ToggleSwitch(id="summer", value=False)
                 yield Label("Học kỳ hè")
-                yield Button("Tải danh sách môn", id="load", variant="primary")
-                yield Button("Săn môn đã chọn", id="run", variant="warning")
+                yield Button("Tải môn", id="load", variant="primary")
+                yield Button("Chọn lớp (subject đang trỏ)", id="pick", variant="warning")
+                yield Button("Bỏ chọn lớp", id="clear-pick", variant="error")
                 yield Button("Quay lại", id="back")
-            yield DataTable(id="courses-table", zebra_stripes=True, cursor_type="row")
+            yield DataTable(id="builder-table", zebra_stripes=True, cursor_type="row")
+            with Horizontal(id="builder-save-row"):
+                yield Input(placeholder="Tên file (rỗng = custom_{time}.json)", id="save-name")
+                yield Button("Lưu danh sách", id="save", variant="success")
         yield Footer()
 
     def on_mount(self) -> None:
-        table = self.query_one("#courses-table", DataTable)
-        table.add_columns("STT", "Tên môn", "Mã", "Lớp đầu", "Sĩ số")
+        table = self.query_one("#builder-table", DataTable)
+        table.add_columns("STT", "Tên môn", "Lớp đã chọn", "Sĩ số")
 
     def _is_summer(self) -> bool:
         return self.query_one("#summer", ToggleSwitch).value
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "back":
+        bid = event.button.id
+        if bid == "back":
             self.app.pop_screen()
-        elif event.button.id == "load":
+            return
+        if bid == "load":
             await self._load_courses()
-        elif event.button.id == "run":
-            await self._run_sniff()
+            return
+        if bid == "pick":
+            await self._pick_class()
+            return
+        if bid == "clear-pick":
+            self._clear_pick()
+            return
+        if bid == "save":
+            self._save()
 
     def action_back(self) -> None:
         self.app.pop_screen()
 
     async def _load_courses(self) -> None:
-        table = self.query_one("#courses-table", DataTable)
+        table = self.query_one("#builder-table", DataTable)
         table.clear()
-        is_summer = self._is_summer()
-        sem_id = (
-            self.user.semester_summer_id if is_summer else self.user.semester_id
-        )
-        url = (
-            self.user.course_summer_url if is_summer else self.user.course_url
-        )
-        print(
-            f"[UI] Load courses: summer={is_summer}, "
-            f"semester_id={sem_id}, url={url}"
-        )
+        self.selections.clear()
         try:
             self.courses, self.names = await self.services["course"].fetch_courses(
-                self.user, is_summer
+                self.user, self._is_summer()
             )
             for i, name in enumerate(self.names):
                 if not self.courses[i]:
                     continue
                 c = self.courses[i][0]
-                table.add_row(
-                    str(i),
-                    name,
-                    c.code,
-                    c.display_name,
-                    f"{c.current_students}/{c.max_students}",
-                    key=str(i),
-                )
+                table.add_row(str(i), name, "---", f"{c.current_students}/{c.max_students}", key=str(i))
         except Exception as e:  # noqa: BLE001
             self.notify(f"Lỗi tải môn: {e}", severity="error")
-            print(f"[UI] Load courses FAILED: {e}")
 
-    async def _run_sniff(self) -> None:
-        table = self.query_one("#courses-table", DataTable)
-        cursor_row = table.cursor_row
-        if cursor_row is None or cursor_row < 0 or not self.courses:
-            self.notify("Chưa chọn môn hoặc chưa tải dữ liệu.", severity="warning")
+    def _refresh_table(self) -> None:
+        table = self.query_one("#builder-table", DataTable)
+        table.clear()
+        for i, name in enumerate(self.names):
+            if not self.courses[i]:
+                continue
+            sel = self.selections.get(i)
+            sel_text = sel.display_name if sel else "---"
+            c = self.courses[i][0]
+            table.add_row(str(i), name, sel_text, f"{c.current_students}/{c.max_students}", key=str(i))
+
+    async def _pick_class(self) -> None:
+        table = self.query_one("#builder-table", DataTable)
+        row = table.cursor_row
+        if row is None or row < 0 or not self.courses:
+            self.notify("Chưa tải môn hoặc chưa chọn subject.", severity="warning")
             return
-        targets = self.courses[cursor_row]
+        # Map displayed row index back to subject index
+        subject_idx = self._row_to_subject_idx(row)
+        if subject_idx is None:
+            return
+        options = self.courses[subject_idx]
+        if not options:
+            return
+        other = [c for k, c in self.selections.items() if k != subject_idx]
+        current = self.selections.get(subject_idx)
 
-        log_screen = LogScreen("Sniffing")
-        self.app.push_screen(log_screen)
+        def _on_pick(picked: Optional[Course]) -> None:
+            if picked is not None:
+                self.selections[subject_idx] = picked
+                self._refresh_table()
 
-        async def _work(ctx: LogCaptureContext):
-            register: RegisterService = self.services["register"]
-            try:
-                await register.sniffing_loop(
-                    self.user,
-                    targets,
-                    self._is_summer(),
-                    interval=Config.SNIFF_INTERVAL,
-                    on_log=ctx.log,
-                    should_stop=ctx.should_stop,
-                )
-            except Exception as e:  # noqa: BLE001
-                ctx.log(f"[ERROR] {e}")
+        self.app.push_screen(
+            ClassPickerScreen(self.names[subject_idx], options, other, current),
+            _on_pick,
+        )
 
-        log_screen.run_async(_work)
+    def _row_to_subject_idx(self, row: int) -> Optional[int]:
+        # Map visible row back to subject index (skip empty subjects)
+        seen = 0
+        for i, group in enumerate(self.courses):
+            if not group:
+                continue
+            if seen == row:
+                return i
+            seen += 1
+        return None
+
+    def _clear_pick(self) -> None:
+        table = self.query_one("#builder-table", DataTable)
+        row = table.cursor_row
+        if row is None or row < 0:
+            return
+        subject_idx = self._row_to_subject_idx(row)
+        if subject_idx is not None and subject_idx in self.selections:
+            del self.selections[subject_idx]
+            self._refresh_table()
+
+    def _save(self) -> None:
+        if not self.selections:
+            self.notify("Chưa chọn lớp nào.", severity="warning")
+            return
+        name = self.query_one("#save-name", Input).value
+        filename = self.custom.save_named(list(self.selections.values()), name)
+        self.notify(f"Đã lưu: {filename}", severity="information")
+        self.query_one("#save-name", Input).value = ""
 
 
-# ---------- custom profile screen ----------
+# ---------- profile screen (register from saved JSON) ----------
 
 
-class CustomScreen(Screen):
+class ProfileScreen(Screen):
     BINDINGS = [
         Binding("escape", "back", "Quay lại"),
     ]
@@ -614,41 +777,45 @@ class CustomScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with Container():
-            yield Label("CUSTOM PROFILE", id="cust-title")
+            yield Label("ĐĂNG KÝ THEO PROFILE", id="profile-title")
             with Horizontal():
                 yield Button("Làm mới", id="refresh")
-                yield Button("Chạy file đã chọn", id="run", variant="success")
+                yield Button("Đăng ký file đã chọn", id="run", variant="success")
                 yield Button("Xóa file đã chọn", id="delete", variant="error")
                 yield Button("Quay lại", id="back")
-            yield DataTable(id="files-table", zebra_stripes=True, cursor_type="row")
+            yield DataTable(id="profile-table", zebra_stripes=True, cursor_type="row")
         yield Footer()
 
     def on_mount(self) -> None:
-        table = self.query_one("#files-table", DataTable)
+        table = self.query_one("#profile-table", DataTable)
         table.add_columns("STT", "Tên file")
         self._refresh()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "back":
+        bid = event.button.id
+        if bid == "back":
             self.app.pop_screen()
-        elif event.button.id == "refresh":
+            return
+        if bid == "refresh":
             self._refresh()
-        elif event.button.id == "delete":
+            return
+        if bid == "delete":
             self._delete_selected()
-        elif event.button.id == "run":
+            return
+        if bid == "run":
             await self._run_selected()
 
     def action_back(self) -> None:
         self.app.pop_screen()
 
     def _refresh(self) -> None:
-        table = self.query_one("#files-table", DataTable)
+        table = self.query_one("#profile-table", DataTable)
         table.clear()
         for i, f in enumerate(self.custom.list_files()):
             table.add_row(str(i), f, key=f)
 
     def _delete_selected(self) -> None:
-        table = self.query_one("#files-table", DataTable)
+        table = self.query_one("#profile-table", DataTable)
         if table.cursor_row is None or table.cursor_row < 0:
             self.notify("Chưa chọn file.", severity="warning")
             return
@@ -661,7 +828,7 @@ class CustomScreen(Screen):
         self.notify(f"Đã xóa {key}", severity="information")
 
     async def _run_selected(self) -> None:
-        table = self.query_one("#files-table", DataTable)
+        table = self.query_one("#profile-table", DataTable)
         if table.cursor_row is None or table.cursor_row < 0:
             self.notify("Chưa chọn file.", severity="warning")
             return
@@ -678,23 +845,26 @@ class CustomScreen(Screen):
             self.notify(f"Lỗi đọc file: {e}", severity="error")
             return
 
-        log_screen = LogScreen(f"Custom: {key}")
+        log_screen = LogScreen(f"Profile: {key}")
         self.app.push_screen(log_screen)
 
         async def _work(ctx: LogCaptureContext):
             register: RegisterService = self.services["register"]
             try:
                 failed = await register.register_custom(self.user, target_courses)
-                if failed and not ctx.should_stop():
+                if failed and Config.AUTO_SNIFF_FALLBACK and not ctx.should_stop():
                     ctx.log(f"[AUTO] {len(failed)} môn fail -> chuyển sang sniffing.")
                     await register.sniffing_loop(
                         self.user,
                         failed,
                         False,
                         interval=Config.SNIFF_INTERVAL,
+                        jitter=Config.SNIFF_JITTER,
                         on_log=ctx.log,
                         should_stop=ctx.should_stop,
                     )
+                elif failed and not Config.AUTO_SNIFF_FALLBACK:
+                    ctx.log(f"[INFO] {len(failed)} môn fail. Tự fallback đã TẮT trong Settings.")
             except Exception as e:  # noqa: BLE001
                 ctx.log(f"[ERROR] {e}")
 
@@ -725,11 +895,13 @@ class CalendarScreen(Screen):
         yield Footer()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "back":
+        bid = event.button.id
+        if bid == "back":
             self.app.pop_screen()
-        elif event.button.id == "ics":
+            return
+        if bid == "ics":
             await self._export_ics()
-        elif event.button.id == "google":
+        elif bid == "google":
             await self._sync_google()
 
     def action_back(self) -> None:
@@ -757,7 +929,6 @@ class CalendarScreen(Screen):
             cal: CalendarService = self.services["calendar"]
             try:
                 events = await cal.get_tlu_events(self.user)
-                # Blocking call -> run in thread to not block event loop
                 await asyncio.to_thread(
                     cal.sync_to_google,
                     events,
@@ -785,19 +956,27 @@ class SettingsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container():
+        with Container(id="settings-container"):
             yield Label("SETTINGS", id="set-title")
-            with Horizontal():
+            with Horizontal(id="settings-row"):
+                yield ToggleSwitch(value=Config.AUTO_SNIFF_FALLBACK, id="auto-sniff")
+                yield Label("Tự fallback sang sniffing khi đăng ký fail")
+            with Horizontal(id="settings-row"):
                 yield ToggleSwitch(value=Config.DEBUG, id="debug")
                 yield Label("Chế độ Debug")
-            with Horizontal():
+            with Horizontal(id="settings-row"):
+                yield Label("Số request song song / lần thử (BURST):")
+                yield Input(value=str(Config.BURST_COUNT), id="burst")
+            with Horizontal(id="settings-row"):
+                yield Label("Giới hạn đồng thời (CONCURRENCY):")
+                yield Input(value=str(Config.CONCURRENCY_LIMIT), id="concurrency")
+            with Horizontal(id="settings-row"):
                 yield Label("Interval sniff (giây):")
-                yield Input(
-                    value=str(Config.SNIFF_INTERVAL),
-                    id="interval",
-                    placeholder="2.0",
-                )
-            with Horizontal():
+                yield Input(value=str(Config.SNIFF_INTERVAL), id="interval")
+            with Horizontal(id="settings-row"):
+                yield Label("Jitter sniff (giây, ±):")
+                yield Input(value=str(Config.SNIFF_JITTER), id="jitter")
+            with Horizontal(id="settings-buttons"):
                 yield Button("Lưu", id="save", variant="primary")
                 yield Button("Đăng xuất", id="logout", variant="error")
                 yield Button("Quay lại", id="back")
@@ -807,11 +986,14 @@ class SettingsScreen(Screen):
         self.app.pop_screen()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "back":
+        bid = event.button.id
+        if bid == "back":
             self.app.pop_screen()
-        elif event.button.id == "save":
+            return
+        if bid == "save":
             self._save()
-        elif event.button.id == "logout":
+            return
+        if bid == "logout":
             for f in (Config.TOKEN_FILE, Config.LOGIN_FILE, Config.GOOGLE_TOKEN_FILE):
                 try:
                     if os.path.exists(f):
@@ -820,18 +1002,55 @@ class SettingsScreen(Screen):
                     pass
             self.app.exit()
 
-    def _save(self) -> None:
-        dbg = self.query_one("#debug", ToggleSwitch).value
+    def _parse_int(self, widget_id: str, label: str) -> Optional[int]:
+        raw = self.query_one(f"#{widget_id}", Input).value.strip()
         try:
-            interval = float(self.query_one("#interval", Input).value.strip() or "2.0")
-            if interval <= 0:
+            v = int(raw)
+            if v <= 0:
                 raise ValueError
+            return v
         except ValueError:
-            self.notify("Interval phải là số dương.", severity="error")
+            self.notify(f"{label} phải là số nguyên dương.", severity="error")
+            return None
+
+    def _parse_float(self, widget_id: str, label: str) -> Optional[float]:
+        raw = self.query_one(f"#{widget_id}", Input).value.strip()
+        try:
+            v = float(raw)
+            if v < 0:
+                raise ValueError
+            return v
+        except ValueError:
+            self.notify(f"{label} phải là số không âm.", severity="error")
+            return None
+
+    def _save(self) -> None:
+        auto_sniff = self.query_one("#auto-sniff", ToggleSwitch).value
+        debug = self.query_one("#debug", ToggleSwitch).value
+        burst = self._parse_int("burst", "Burst count")
+        if burst is None:
             return
-        Config.DEBUG = dbg
+        conc = self._parse_int("concurrency", "Concurrency limit")
+        if conc is None:
+            return
+        interval = self._parse_float("interval", "Sniff interval")
+        if interval is None:
+            return
+        jitter = self._parse_float("jitter", "Jitter")
+        if jitter is None:
+            return
+
+        Config.AUTO_SNIFF_FALLBACK = auto_sniff
+        Config.DEBUG = debug
+        Config.BURST_COUNT = burst
+        Config.CONCURRENCY_LIMIT = conc
         Config.SNIFF_INTERVAL = interval
-        self.notify("Đã lưu.", severity="information")
+        Config.SNIFF_JITTER = jitter
+        try:
+            Config.save_settings()
+            self.notify("Đã lưu vào res/settings.json.", severity="information")
+        except OSError as e:
+            self.notify(f"Lỗi ghi file: {e}", severity="error")
 
 
 # ---------- main app ----------
@@ -845,10 +1064,24 @@ class TLUApp(App):
     }
 
     /* Rows that contain a ToggleSwitch + Label */
-    #save-login-row, #summer-row, #debug-row {
+    #save-login-row, #summer-row, #debug-row, #settings-row {
         height: 3;
         align-vertical: middle;
         padding: 1 0 0 0;
+    }
+    #settings-row Label {
+        width: auto;
+        padding: 0 1 0 0;
+    }
+    #settings-row Input {
+        width: 16;
+    }
+    #settings-buttons {
+        padding-top: 1;
+        align-horizontal: center;
+    }
+    #settings-buttons Button {
+        margin: 0 1;
     }
 
     /* Login screen — centered on screen, no Header/Footer */
@@ -914,8 +1147,16 @@ class TLUApp(App):
         margin: 1 1;
         min-width: 36;
     }
+    #menu-footer {
+        align-horizontal: center;
+        padding-top: 1;
+    }
+    #menu-footer Button {
+        margin: 0 1;
+        min-width: 16;
+    }
 
-    /* Register / Sniff / Custom / Calendar screens */
+    /* Register / Builder / Profile / Calendar screens */
     Label {
         color: #cad3f5;
     }
@@ -934,6 +1175,58 @@ class TLUApp(App):
     }
     DataTable > .datatable--hover {
         background: #494d64;
+    }
+    SelectionList {
+        height: 1fr;
+        margin: 1 0;
+        background: #1e2030;
+        border: round #5b6078;
+    }
+    #reg-toolbar, #builder-toolbar {
+        height: auto;
+        padding: 0 1;
+    }
+    #reg-toolbar Button, #builder-toolbar Button {
+        margin: 0 1;
+    }
+    #builder-save-row {
+        height: auto;
+        padding: 1 0;
+    }
+    #builder-save-row Input {
+        width: 1fr;
+    }
+    #builder-save-row Button {
+        margin-left: 1;
+    }
+
+    /* Class picker modal */
+    #picker-container {
+        align: center middle;
+        padding: 1 2;
+        width: 80;
+        height: auto;
+        max-height: 90%;
+        background: #1e2030;
+        border: round #5b6078;
+    }
+    #picker-title {
+        text-style: bold;
+        color: #c6a0f6;
+        text-align: center;
+        padding-bottom: 1;
+    }
+    #picker-scroll {
+        height: auto;
+        max-height: 30;
+        padding: 0 1;
+    }
+    #picker-list {
+        height: auto;
+    }
+    #picker-buttons {
+        align-horizontal: center;
+        padding-top: 1;
     }
 
     /* Log screen */
