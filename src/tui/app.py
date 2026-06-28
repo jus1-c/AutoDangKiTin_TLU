@@ -36,7 +36,6 @@ from textual.widgets import (
     Label,
     RichLog,
     Static,
-    Switch,
 )
 
 from src.config import Config
@@ -93,6 +92,50 @@ def capture_stdout(log_widget: RichLog):
         yield
     finally:
         sys.stdout = original
+
+
+# ---------- custom toggle switch ----------
+
+
+from rich.text import Text as RichText
+from textual.reactive import reactive
+
+
+class ToggleSwitch(Static, can_focus=True):
+    """iOS-style toggle: circle slides left (off) or right (on), track
+    changes color. Click to toggle. No animation glitches.
+    """
+
+    DEFAULT_CSS = """
+    ToggleSwitch {
+        width: 5;
+        height: 1;
+        background: transparent;
+    }
+    ToggleSwitch:hover {
+        background: transparent;
+    }
+    """
+
+    value = reactive(False)
+
+    def __init__(self, value: bool = False, **kwargs):
+        super().__init__(**kwargs)
+        self.value = value
+
+    def render(self) -> RichText:
+        if self.value:
+            # Green track, circle on RIGHT
+            return RichText("  ●  ", style="black on #a6da95")
+        else:
+            # Gray track, circle on LEFT
+            return RichText("  ○  ", style="#cad3f5 on #5b6078")
+
+    def watch_value(self, value: bool) -> None:
+        self.refresh()
+
+    def on_click(self) -> None:
+        self.value = not self.value
 
 
 # ---------- log screen (reused across actions) ----------
@@ -196,7 +239,7 @@ class LoginScreen(ModalScreen[Optional[User]]):
             yield Label("Mật khẩu:")
             yield Input(password=True, id="password", placeholder="Mật khẩu")
             with Horizontal(id="save-login-row"):
-                yield Switch(value=self._default_save, animate=False, id="save-login")
+                yield ToggleSwitch(value=self._default_save, id="save-login")
                 yield Label("Lưu đăng nhập cho lần sau")
             yield Static("", id="login-error")
             with Horizontal(id="login-buttons"):
@@ -223,7 +266,7 @@ class LoginScreen(ModalScreen[Optional[User]]):
     async def _attempt_login(self) -> None:
         u = self.query_one("#username", Input).value.strip()
         p = self.query_one("#password", Input).value
-        save = self.query_one("#save-login", Switch).value
+        save = self.query_one("#save-login", ToggleSwitch).value
         err = self.query_one("#login-error", Static)
         if not u or not p:
             err.update("Thiếu tên đăng nhập hoặc mật khẩu.")
@@ -334,14 +377,13 @@ class RegisterScreen(Screen):
         self.services = services
         self.courses: List[List[Course]] = []
         self.names: List[str] = []
-        self.is_summer = False
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Container():
             yield Label("ĐĂNG KÝ NHANH", id="reg-title")
             with Horizontal():
-                yield Switch(id="summer", value=False, animate=False)
+                yield ToggleSwitch(id="summer", value=False)
                 yield Label("Học kỳ hè")
                 yield Button("Tải danh sách môn", id="load", variant="primary")
                 yield Button("Đăng ký môn đã chọn", id="run", variant="success")
@@ -353,9 +395,8 @@ class RegisterScreen(Screen):
         table = self.query_one("#courses-table", DataTable)
         table.add_columns("STT", "Tên môn", "Mã", "Lớp đầu", "Sĩ số")
 
-    def on_switch_changed(self, event: Switch.Changed) -> None:
-        if event.switch.id == "summer":
-            self.is_summer = event.value
+    def _is_summer(self) -> bool:
+        return self.query_one("#summer", ToggleSwitch).value
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
@@ -363,7 +404,7 @@ class RegisterScreen(Screen):
         elif event.button.id == "load":
             await self._load_courses()
         elif event.button.id == "run":
-            await self._run_register()
+            await self._run_sniff()
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -373,7 +414,7 @@ class RegisterScreen(Screen):
         table.clear()
         try:
             self.courses, self.names = await self.services["course"].fetch_courses(
-                self.user, self.is_summer
+                self.user, self._is_summer()
             )
             for i, name in enumerate(self.names):
                 if not self.courses[i]:
@@ -407,14 +448,14 @@ class RegisterScreen(Screen):
             register: RegisterService = self.services["register"]
             try:
                 failed = await register.register_subjects(
-                    self.user, indices, self.courses, self.is_summer
+                    self.user, indices, self.courses, self._is_summer()
                 )
                 if failed and not ctx.should_stop():
                     ctx.log(f"[AUTO] {len(failed)} môn fail -> chuyển sang sniffing.")
                     register.sniffing_loop(
                         self.user,
                         failed,
-                        self.is_summer,
+                        self._is_summer(),
                         interval=Config.SNIFF_INTERVAL,
                         on_log=ctx.log,
                         should_stop=ctx.should_stop,
@@ -439,14 +480,13 @@ class SniffScreen(Screen):
         self.services = services
         self.courses: List[List[Course]] = []
         self.names: List[str] = []
-        self.is_summer = False
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Container():
             yield Label("SNIFFING RIÊNG", id="sniff-title")
             with Horizontal():
-                yield Switch(id="summer", value=False, animate=False)
+                yield ToggleSwitch(id="summer", value=False)
                 yield Label("Học kỳ hè")
                 yield Button("Tải danh sách môn", id="load", variant="primary")
                 yield Button("Săn môn đã chọn", id="run", variant="warning")
@@ -458,9 +498,8 @@ class SniffScreen(Screen):
         table = self.query_one("#courses-table", DataTable)
         table.add_columns("STT", "Tên môn", "Mã", "Lớp đầu", "Sĩ số")
 
-    def on_switch_changed(self, event: Switch.Changed) -> None:
-        if event.switch.id == "summer":
-            self.is_summer = event.value
+    def _is_summer(self) -> bool:
+        return self.query_one("#summer", ToggleSwitch).value
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
@@ -478,7 +517,7 @@ class SniffScreen(Screen):
         table.clear()
         try:
             self.courses, self.names = await self.services["course"].fetch_courses(
-                self.user, self.is_summer
+                self.user, self._is_summer()
             )
             for i, name in enumerate(self.names):
                 if not self.courses[i]:
@@ -512,7 +551,7 @@ class SniffScreen(Screen):
                 await register.sniffing_loop(
                     self.user,
                     targets,
-                    self.is_summer,
+                    self._is_summer(),
                     interval=Config.SNIFF_INTERVAL,
                     on_log=ctx.log,
                     should_stop=ctx.should_stop,
@@ -714,7 +753,7 @@ class SettingsScreen(Screen):
         with Container():
             yield Label("SETTINGS", id="set-title")
             with Horizontal():
-                yield Switch(value=Config.DEBUG, animate=False, id="debug")
+                yield ToggleSwitch(value=Config.DEBUG, id="debug")
                 yield Label("Chế độ Debug")
             with Horizontal():
                 yield Label("Interval sniff (giây):")
@@ -747,7 +786,7 @@ class SettingsScreen(Screen):
             self.app.exit()
 
     def _save(self) -> None:
-        dbg = self.query_one("#debug", Switch).value
+        dbg = self.query_one("#debug", ToggleSwitch).value
         try:
             interval = float(self.query_one("#interval", Input).value.strip() or "2.0")
             if interval <= 0:
@@ -770,30 +809,7 @@ class TLUApp(App):
         background: #24273a;
     }
 
-    /* Switch — green ON, gray OFF */
-    Switch {
-        background: transparent;
-        border: none;
-        height: 1;
-        width: auto;
-        margin: 0 1 0 0;
-    }
-    Switch > .switch--slider {
-        background: #5b6078;
-        color: #cad3f5;
-    }
-    Switch.-on > .switch--slider {
-        background: #a6da95;
-        color: #24273a;
-    }
-    Switch:hover > .switch--slider {
-        background: #6e738d;
-    }
-    Switch.-on:hover > .switch--slider {
-        background: #b7e3a8;
-    }
-
-    /* Login + Settings rows that contain a Switch + Label */
+    /* Rows that contain a ToggleSwitch + Label */
     #save-login-row, #summer-row, #debug-row {
         height: 3;
         align-vertical: middle;
