@@ -29,7 +29,6 @@ from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
-    Checkbox,
     DataTable,
     Footer,
     Header,
@@ -37,6 +36,7 @@ from textual.widgets import (
     Label,
     RichLog,
     Static,
+    Switch,
 )
 
 from src.config import Config
@@ -183,9 +183,10 @@ class LoginScreen(ModalScreen[Optional[User]]):
         Binding("ctrl+c", "cancel", "Hủy", show=False),
     ]
 
-    def __init__(self, default_user: Optional[str] = None):
+    def __init__(self, default_user: Optional[str] = None, default_save: bool = True):
         super().__init__()
         self._default_user = default_user or ""
+        self._default_save = default_save
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -195,6 +196,7 @@ class LoginScreen(ModalScreen[Optional[User]]):
             yield Input(value=self._default_user, id="username", placeholder="Mã sinh viên")
             yield Label("Mật khẩu:")
             yield Input(password=True, id="password", placeholder="Mật khẩu")
+            yield Switch("Lưu đăng nhập cho lần sau", value=self._default_save, animate=False, id="save-login")
             yield Static("", id="login-error")
             with Horizontal(id="login-buttons"):
                 yield Button("Đăng nhập", id="login-btn", variant="primary")
@@ -221,6 +223,7 @@ class LoginScreen(ModalScreen[Optional[User]]):
     async def _attempt_login(self) -> None:
         u = self.query_one("#username", Input).value.strip()
         p = self.query_one("#password", Input).value
+        save = self.query_one("#save-login", Switch).value
         err = self.query_one("#login-error", Static)
         if not u or not p:
             err.update("Thiếu tên đăng nhập hoặc mật khẩu.")
@@ -231,7 +234,7 @@ class LoginScreen(ModalScreen[Optional[User]]):
             client = TLUClient()
             auth = AuthService(client)
             try:
-                user = await auth.login(u, p)
+                user = await auth.login(u, p, save=save)
                 self.dismiss({"user": user, "client": client})
             except Exception as e:  # noqa: BLE001
                 err.update(f"Lỗi: {e}")
@@ -338,7 +341,7 @@ class RegisterScreen(Screen):
         with Container():
             yield Label("ĐĂNG KÝ NHANH", id="reg-title")
             with Horizontal():
-                yield Checkbox("Học kỳ hè", id="summer", value=False)
+                yield Switch("Học kỳ hè", id="summer", value=False, animate=False)
                 yield Button("Tải danh sách môn", id="load", variant="primary")
                 yield Button("Đăng ký môn đã chọn", id="run", variant="success")
                 yield Button("Quay lại", id="back")
@@ -349,8 +352,8 @@ class RegisterScreen(Screen):
         table = self.query_one("#courses-table", DataTable)
         table.add_columns("STT", "Tên môn", "Mã", "Lớp đầu", "Sĩ số")
 
-    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        if event.checkbox.id == "summer":
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id == "summer":
             self.is_summer = event.value
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -442,7 +445,7 @@ class SniffScreen(Screen):
         with Container():
             yield Label("SNIFFING RIÊNG", id="sniff-title")
             with Horizontal():
-                yield Checkbox("Học kỳ hè", id="summer", value=False)
+                yield Switch("Học kỳ hè", id="summer", value=False, animate=False)
                 yield Button("Tải danh sách môn", id="load", variant="primary")
                 yield Button("Săn môn đã chọn", id="run", variant="warning")
                 yield Button("Quay lại", id="back")
@@ -453,8 +456,8 @@ class SniffScreen(Screen):
         table = self.query_one("#courses-table", DataTable)
         table.add_columns("STT", "Tên môn", "Mã", "Lớp đầu", "Sĩ số")
 
-    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        if event.checkbox.id == "summer":
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id == "summer":
             self.is_summer = event.value
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -708,7 +711,7 @@ class SettingsScreen(Screen):
         yield Header()
         with Container():
             yield Label("SETTINGS", id="set-title")
-            yield Checkbox("Chế độ Debug", value=Config.DEBUG, id="debug")
+            yield Switch("Chế độ Debug", value=Config.DEBUG, animate=False, id="debug")
             with Horizontal():
                 yield Label("Interval sniff (giây):")
                 yield Input(
@@ -740,7 +743,7 @@ class SettingsScreen(Screen):
             self.app.exit()
 
     def _save(self) -> None:
-        dbg = self.query_one("#debug", Checkbox).value
+        dbg = self.query_one("#debug", Switch).value
         try:
             interval = float(self.query_one("#interval", Input).value.strip() or "2.0")
             if interval <= 0:
@@ -784,12 +787,17 @@ class TLUApp(App):
 
     def _do_login(self) -> None:
         default_user = None
+        default_save = True
         if os.path.exists(Config.LOGIN_FILE):
             try:
                 with open(Config.LOGIN_FILE, "r", encoding="utf-8") as f:
                     default_user = json.load(f).get("username")
+                default_save = True
             except Exception:
                 default_user = None
+                default_save = True
+        else:
+            default_save = False
 
         def _on_login(result) -> None:
             if not result:
@@ -807,7 +815,7 @@ class TLUApp(App):
             }
             self.push_screen(MenuScreen(user, self.services))
 
-        self.push_screen(LoginScreen(default_user), _on_login)
+        self.push_screen(LoginScreen(default_user, default_save), _on_login)
 
 
 def run_tui() -> None:
