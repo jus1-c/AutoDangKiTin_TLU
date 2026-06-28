@@ -25,7 +25,7 @@ from typing import Any, Awaitable, Callable, List, Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal
+from textual.containers import Container, Horizontal, Center
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
@@ -189,27 +189,30 @@ class LoginScreen(ModalScreen[Optional[User]]):
         self._default_save = default_save
 
     def compose(self) -> ComposeResult:
-        yield Header()
         with Container(id="login-container"):
             yield Label("ĐĂNG NHẬP", id="login-title")
-            yield Label("Mã sinh viên:")
+            yield Label("Mã sinh viên:", classes="login-field-label")
             yield Input(value=self._default_user, id="username", placeholder="Mã sinh viên")
-            yield Label("Mật khẩu:")
+            yield Label("Mật khẩu:", classes="login-field-label")
             yield Input(password=True, id="password", placeholder="Mật khẩu")
             with Horizontal(id="save-login-row"):
                 yield Switch(value=self._default_save, id="save-login")
                 yield Label("Lưu đăng nhập cho lần sau", id="save-login-label")
             yield Static("", id="login-error")
-            with Horizontal(id="login-buttons"):
-                yield Button("Đăng nhập", id="login-btn", variant="primary")
-                yield Button("Thoát", id="cancel-btn", variant="default")
-        yield Footer()
+            with Center(id="login-buttons"):
+                with Horizontal():
+                    yield Button("Đăng nhập", id="login-btn", variant="primary")
+                    yield Button("Thoát", id="cancel-btn", variant="default")
 
     def on_mount(self) -> None:
         if not self._default_user:
             self.query_one("#username", Input).focus()
         else:
             self.query_one("#password", Input).focus()
+
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id == "save-login":
+            pass
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel-btn":
@@ -775,38 +778,81 @@ class TLUApp(App):
     #login-title { color: $accent; }
     #menu-greet { color: $success; }
     #menu-hint { text-align: center; color: $text-muted; padding-bottom: 1; }
-    Button { margin: 1 1; min-width: 30; }
+    #menu-container Button { margin: 1 1; min-width: 30; }
     #login-buttons, #log-buttons { padding-top: 1; }
-    #login-error { color: $error; padding: 1 0; }
     #log-container { padding: 1 2; height: 100%; }
     #log-title { text-style: bold; padding-bottom: 1; }
     #log { height: 1fr; border: solid $primary; }
 
     /* Switch (Catppuccin Macchiato tones) */
     Switch {
-        height: 3;
-        width: 8;
+        background: transparent;
+        width: auto;
+        height: auto;
     }
     Switch > .switch--slider {
-        background: $surface-lighten-1;
-        color: $text-muted;
+        background: #5b6078;
+        color: #cad3f5;
     }
-    Switch > .switch--slider.-on {
-        background: #a6da95;          /* Catppuccin Macchiato Green */
-        color: #24273a;              /* Catppuccin Macchiato Base */
-    }
-    Switch:focus > .switch--slider {
-        background: $surface-lighten-2;
-    }
-    Switch:focus > .switch--slider.-on {
+    Switch.-on > .switch--slider {
         background: #a6da95;
+        color: #24273a;
     }
-    #save-login-row, #summer-row, #debug-row {
+    Switch:hover > .switch--slider {
+        background: #6e738d;
+    }
+    Switch.-on:hover > .switch--slider {
+        background: #b7e3a8;
+    }
+
+    /* Login form layout (ModalScreen container) */
+    #login-container {
+        align: center middle;
+        padding: 1 2;
+        width: 50;
+        height: auto;
+        background: #24273a;
+        border: round #5b6078;
+    }
+    #login-title {
+        text-align: center;
+        text-style: bold;
+        color: #c6a0f6;
+        padding: 0 0 1 0;
+        width: 100%;
+    }
+    .login-field-label {
+        padding: 1 0 0 0;
+        color: #a5adcb;
+    }
+    #login-container Input {
+        margin: 0;
+    }
+    #save-login-row {
         height: 3;
-        align-vertical: middle;
+        padding: 1 0 0 0;
     }
-    #save-login-label, #summer-row Label, #debug-row Label {
-        padding: 0 1;
+    #save-login-row Switch {
+        margin: 0 1 0 0;
+    }
+    #save-login-label {
+        padding: 0;
+    }
+    #login-error {
+        color: #ed8796;
+        padding: 1 0 0 0;
+        text-align: center;
+    }
+    #login-buttons {
+        padding-top: 1;
+        height: auto;
+        width: 100%;
+    }
+    #login-buttons Horizontal {
+        height: auto;
+    }
+    #login-buttons Button {
+        margin: 0 1;
     }
     """
 
