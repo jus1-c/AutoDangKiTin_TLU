@@ -44,6 +44,29 @@ class CourseService:
         print(f"[WARNING]   semester_id={sem_id} failed ({response.status_code}): {server_msg or response.reason_phrase}")
         return None, response.status_code
 
+    async def get_registration_start(
+        self, user: User, is_summer: bool = False
+    ) -> Optional[int]:
+        """Fetch the registration period start (ms epoch) from the API.
+
+        This is the time the registration window OPENS (fetched fresh
+        each call, not cached). Returns None on network/parse error.
+        """
+        sem_id = user.semester_summer_id if is_summer else user.semester_id
+        url = user.course_url(sem_id)
+        try:
+            response = await self.client.request("GET", url)
+            if response.status_code != 200 or not response.text.strip():
+                return None
+            data = response.json()
+            view_obj = data.get("courseRegisterViewObject", {}) or {}
+            ts = view_obj.get("startDate")
+            if isinstance(ts, (int, float)) and ts > 0:
+                return int(ts)
+        except Exception as e:
+            print(f"[WARN] get_registration_start: {e}")
+        return None
+
     async def fetch_courses(self, user: User, is_summer: bool = False) -> Tuple[List[List[Course]], List[str]]:
         """
         Fetches courses from API.

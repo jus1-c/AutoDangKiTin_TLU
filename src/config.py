@@ -31,6 +31,10 @@ class Config:
     BURST_COUNT = int(os.getenv("BURST_COUNT", 5))
     AUTO_SNIFF_FALLBACK = os.getenv("AUTO_SNIFF_FALLBACK", "True").lower() in ("true", "1", "yes")
     DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
+    # Schedule: khi bật, các nút "Đăng ký" sẽ qua màn hình đếm ngược
+    # trước khi vào register UI. Mốc đích = thời gian mở đăng kí (lấy từ API).
+    SCHEDULE_ENABLED = os.getenv("SCHEDULE_ENABLED", "False").lower() in ("true", "1", "yes")
+    SCHEDULE_LEAD_SECONDS = int(os.getenv("SCHEDULE_LEAD_SECONDS", 30))
 
     # User-editable settings persisted to SETTINGS_FILE (subset of the above)
     _PERSIST_KEYS = (
@@ -40,6 +44,8 @@ class Config:
         "SNIFF_MAX_DURATION_MIN",
         "BURST_COUNT",
         "AUTO_SNIFF_FALLBACK",
+        "SCHEDULE_ENABLED",
+        "SCHEDULE_LEAD_SECONDS",
         "DEBUG",
     )
     

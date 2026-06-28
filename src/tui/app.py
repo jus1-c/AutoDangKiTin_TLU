@@ -573,9 +573,6 @@ class RegisterScreen(Screen):
                 "code": first.code or first.display_name,
                 "lich": first.sessions_summary or "—",
             })
-        log_screen = LogScreen("Đăng ký nhanh", status_rows=status_rows)
-        self.app.push_screen(log_screen)
-
         async def _work(ctx: LogCaptureContext):
             register: RegisterService = self.services["register"]
             is_summer = self._is_summer()
@@ -619,7 +616,11 @@ class RegisterScreen(Screen):
             except Exception as e:  # noqa: BLE001
                 ctx.log(f"[ERROR] {e}")
 
-        log_screen.run_async(_work)
+        _push_register_flow(
+            self.app, self.user, self.services, self._is_summer(),
+            log_title="Đăng ký nhanh", status_rows=status_rows,
+            work_factory=_work,
+        )
 
 
 # ---------- class picker modal (table with conflict-grey) ----------
@@ -1169,8 +1170,7 @@ class ProfileScreen(Screen):
             }
             for c in target_courses
         ]
-        log_screen = LogScreen(f"Profile: {key} ({hk_label})", status_rows=status_rows)
-        self.app.push_screen(log_screen)
+        log_screen_title = f"Profile: {key} ({hk_label})"
 
         async def _work(ctx: LogCaptureContext):
             register: RegisterService = self.services["register"]
@@ -1211,7 +1211,203 @@ class ProfileScreen(Screen):
             except Exception as e:  # noqa: BLE001
                 ctx.log(f"[ERROR] {e}")
 
-        log_screen.run_async(_work)
+        _push_register_flow(
+            self.app, self.user, self.services, is_summer,
+            log_title=log_screen_title, status_rows=status_rows,
+            work_factory=_work,
+        )
+
+
+# ---------- countdown screen (schedule) ----------
+
+
+def _push_register_flow(
+    app,
+    user: User,
+    services: dict,
+    is_summer: bool,
+    log_title: str,
+    status_rows: List[Dict[str, Any]],
+    work_factory: Callable[[LogCaptureContext, "TLUApp"], Awaitable[Any]],
+) -> None:
+    """Push đăng kí flow: nếu SCHEDULE_ENABLED + còn thời gian, hiện
+    CountdownScreen trước rồi mới push LogScreen. Ngược lại, push
+    LogScreen thẳng.
+
+    `work_factory(ctx)` là coroutine sẽ chạy trong worker của LogScreen
+    (nhận ctx để gọi ctx.log / ctx.update_status / ctx.should_stop).
+    """
+    import asyncio as _asyncio
+
+    async def _go_log():
+        log_screen = LogScreen(log_title, status_rows=status_rows)
+        await app.push_screen_wait(log_screen)
+        log_screen.run_async(work_factory)
+
+    if not Config.SCHEDULE_ENABLED:
+        app.call_later(_go_log)
+        return
+
+    async def _check_and_maybe_countdown():
+        course_svc: CourseService = services.get("course")
+        if course_svc is None:
+            # No service → skip countdown
+            app.call_later(_go_log)
+            return
+        try:
+            target_ms = await course_svc.get_registration_start(user, is_summer)
+        except Exception as e:
+            print(f"[WARN] get_registration_start: {e}")
+            target_ms = None
+        if target_ms is None or target_ms <= 0:
+            # Không lấy được target → skip countdown
+            app.call_later(_go_log)
+            return
+        now_ms = int(_time_now() * 1000)
+        lead = max(0, int(Config.SCHEDULE_LEAD_SECONDS))
+        launch_ms = target_ms - lead * 1000
+        if launch_ms <= now_ms:
+            # Đã qua launch moment rồi → không cần countdown
+            app.call_later(_go_log)
+            return
+
+        # Hiện CountdownScreen. Khi tới giờ → on_done push LogScreen.
+        def _on_done():
+            app.call_later(_go_log)
+
+        def _on_cancel():
+            # Khi user hủy → về menu (pop CountdownScreen đã làm rồi,
+            # chỉ cần pop LogScreen nếu nó đã được push trước đó — nhưng
+            # chưa push, nên không cần làm gì).
+            pass
+
+        cd = CountdownScreen(
+            target_epoch_ms=target_ms,
+            lead_seconds=lead,
+            on_done=_on_done,
+            on_cancel=_on_cancel,
+            title=log_title,
+        )
+        app.push_screen(cd)
+
+    app.call_later(_check_and_maybe_countdown)
+
+
+class CountdownScreen(ModalScreen):
+    """Đếm ngược đến thời điểm mở đăng kí (lấy từ API).
+
+    Hiển thị thời gian còn lại, target time, và lead time. Khi tới
+    `target - lead_seconds`, sẽ tự gọi `on_done()` để push LogScreen.
+
+    Có nút Hủy để thoát về menu. Có thể set thời gian mục tiêu qua
+    tham số `target_epoch_ms` (epoch ms từ API).
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Hủy"),
+    ]
+
+    def __init__(
+        self,
+        target_epoch_ms: int,
+        lead_seconds: int,
+        on_done: Callable[[], None],
+        on_cancel: Optional[Callable[[], None]] = None,
+        title: str = "HẸN GIỜ ĐĂNG KÝ",
+    ):
+        super().__init__()
+        self.target_ms = int(target_epoch_ms)
+        self.lead_seconds = int(lead_seconds)
+        # Launch moment = target - lead (nếu <= now thì launch ngay)
+        self.launch_ms = self.target_ms - self.lead_seconds * 1000
+        self._on_done = on_done
+        self._on_cancel = on_cancel
+        self.title_text = title
+        self._timer_handle = None
+        self._fired = False
+
+    def compose(self) -> ComposeResult:
+        with Container(id="countdown-container"):
+            yield Label(self.title_text, id="countdown-title")
+            yield Label("—:—:—", id="countdown-clock")
+            yield Label("", id="countdown-target")
+            yield Label("", id="countdown-lead")
+            with Horizontal(id="countdown-buttons"):
+                yield Button("Hủy hẹn giờ (Esc)", id="countdown-cancel", variant="error")
+
+    def on_mount(self) -> None:
+        self._tick()
+        # Auto-refresh mỗi 0.2s. Dùng timer Textual (sync) để không cần
+        # tạo coroutine riêng — vẫn update UI realtime.
+        self._timer_handle = self.set_interval(0.2, self._tick)
+
+    def on_unmount(self) -> None:
+        if self._timer_handle is not None:
+            self._timer_handle.stop()
+
+    def _now_ms(self) -> int:
+        return int(_time_now() * 1000)
+
+    def _tick(self) -> None:
+        now = self._now_ms()
+        remaining = self.launch_ms - now
+        clock = self.query_one("#countdown-clock")
+        target_lbl = self.query_one("#countdown-target")
+        lead_lbl = self.query_one("#countdown-lead")
+        if remaining <= 0:
+            clock.update("[bold #a6da95]ĐÃ ĐẾN GIỜ — bắt đầu đăng ký![/]")
+            target_lbl.update("")
+            lead_lbl.update("")
+            if not self._fired:
+                self._fired = True
+                if self._timer_handle is not None:
+                    self._timer_handle.stop()
+                self.dismiss()
+                try:
+                    self._on_done()
+                except Exception as e:
+                    print(f"[ERROR] countdown on_done: {e}")
+            return
+        # Format HH:MM:SS
+        total_sec = remaining // 1000
+        hh, rem = divmod(total_sec, 3600)
+        mm, ss = divmod(rem, 60)
+        clock.update(f"[bold #f5a97f]{hh:02d}:{mm:02d}:{ss:02d}[/]")
+        target_str = _format_epoch(self.target_ms)
+        target_lbl.update(f"Mở đăng kí lúc: [cyan]{target_str}[/]  (target epoch: {self.target_ms})")
+        lead_lbl.update(
+            f"Lead time: [yellow]{self.lead_seconds}s[/]  →  "
+            f"Auto-launch lúc: [cyan]{_format_epoch(self.launch_ms)}[/]"
+        )
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "countdown-cancel":
+            self.action_cancel()
+
+    def action_cancel(self) -> None:
+        if self._timer_handle is not None:
+            self._timer_handle.stop()
+        self.dismiss()
+        if self._on_cancel is not None:
+            try:
+                self._on_cancel()
+            except Exception as e:
+                print(f"[ERROR] countdown on_cancel: {e}")
+
+
+def _time_now() -> float:
+    """Wrapper for time.time() — easy to monkey-patch in tests."""
+    import time as _t
+    return _t.time()
+
+
+def _format_epoch(ms: int) -> str:
+    """Format epoch ms as 'YYYY-MM-DD HH:MM:SS' in local time."""
+    import datetime as _dt
+    try:
+        return _dt.datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return f"<{ms}>"
 
 
 # ---------- calendar screen ----------
@@ -1322,6 +1518,12 @@ class SettingsScreen(Screen):
             with Horizontal(id="row-max-duration", classes="settings-row"):
                 yield Label("Giới hạn thời gian sniff (phút, 0 = vô hạn):")
                 yield Input(value=str(Config.SNIFF_MAX_DURATION_MIN), id="max_duration")
+            with Horizontal(id="row-schedule-enabled", classes="settings-row"):
+                yield ToggleSwitch(value=Config.SCHEDULE_ENABLED, id="schedule-enabled")
+                yield Label("Bật hẹn giờ (đếm ngược tới lúc mở đăng kí)")
+            with Horizontal(id="row-schedule-lead", classes="settings-row"):
+                yield Label("Lead time (giây trước khi auto-launch):")
+                yield Input(value=str(Config.SCHEDULE_LEAD_SECONDS), id="schedule-lead")
             with Horizontal(id="settings-buttons"):
                 yield Button("Lưu", id="save", variant="primary")
                 yield Button("Đăng xuất", id="logout", variant="error")
@@ -1381,6 +1583,7 @@ class SettingsScreen(Screen):
     def _save(self) -> None:
         auto_sniff = self.query_one("#auto-sniff", ToggleSwitch).value
         debug = self.query_one("#debug", ToggleSwitch).value
+        schedule_enabled = self.query_one("#schedule-enabled", ToggleSwitch).value
         burst = self._parse_int("burst", "Burst count")
         if burst is None:
             return
@@ -1396,6 +1599,9 @@ class SettingsScreen(Screen):
         max_dur = self._parse_int("max_duration", "Max sniff duration", allow_zero=True)
         if max_dur is None:
             return
+        lead = self._parse_int("schedule-lead", "Schedule lead time", allow_zero=True)
+        if lead is None:
+            return
 
         Config.AUTO_SNIFF_FALLBACK = auto_sniff
         Config.DEBUG = debug
@@ -1404,6 +1610,8 @@ class SettingsScreen(Screen):
         Config.SNIFF_INTERVAL = interval
         Config.SNIFF_JITTER = jitter
         Config.SNIFF_MAX_DURATION_MIN = max_dur
+        Config.SCHEDULE_ENABLED = schedule_enabled
+        Config.SCHEDULE_LEAD_SECONDS = lead
         try:
             Config.save_settings()
             self.notify("Đã lưu vào res/settings.json.", severity="information")
@@ -1432,7 +1640,37 @@ class TLUApp(App):
         padding: 0 1 0 0;
     }
     .settings-row Input {
-        width: 16;
+        width: 24;
+    }
+
+    /* Countdown screen (schedule) */
+    #countdown-container {
+        align: center middle;
+        padding: 2 4;
+        width: 60%;
+        height: auto;
+        background: #1e2030;
+        border: round #c6a0f6;
+    }
+    #countdown-title {
+        text-style: bold;
+        color: #c6a0f6;
+        text-align: center;
+        padding-bottom: 1;
+    }
+    #countdown-clock {
+        text-align: center;
+        text-style: bold;
+        color: #f5a97f;
+        padding: 1 0;
+    }
+    #countdown-target, #countdown-lead {
+        text-align: center;
+        color: #a5adcb;
+    }
+    #countdown-buttons {
+        align-horizontal: center;
+        padding-top: 1;
     }
     #settings-buttons {
         padding-top: 1;
