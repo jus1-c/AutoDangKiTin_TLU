@@ -20,7 +20,7 @@ class CourseService:
         error. Caller decides what to do with the result.
         """
         sem_id = user.semester_summer_id if is_summer else user.semester_id
-        url = user.course_summer_url if is_summer else user.course_url
+        url = user.course_url(sem_id)
         print(f"[INFO]   Try semester_id={sem_id} → {url}")
         try:
             response = await self.client.request("GET", url)

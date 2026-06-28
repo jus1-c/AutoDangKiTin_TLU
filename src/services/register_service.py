@@ -27,7 +27,7 @@ class RegisterService:
         concurrently — we just await them in submission order to report
         progress sequentially.
         """
-        url = user.register_summer_url if is_summer else user.register_url
+        url = user.register_url(user.semester_summer_id if is_summer else user.semester_id)
 
         tasks = []
         subject_info = []  # (idx, first_course) for progress reporting
@@ -65,7 +65,7 @@ class RegisterService:
 
         `on_progress(course, success)` is called after each course finishes.
         """
-        url = user.register_url
+        url = user.register_url()
 
         failed_courses = []
         tasks = []
@@ -202,8 +202,8 @@ class RegisterService:
             log("Không có môn nào để săn.")
             return []
 
-        list_url = user.course_summer_url if is_summer else user.course_url
-        register_url = user.register_summer_url if is_summer else user.register_url
+        list_url = user.course_url(user.semester_summer_id if is_summer else user.semester_id)
+        register_url = user.register_url(user.semester_summer_id if is_summer else user.semester_id)
 
         targets: List[Course] = list(courses)
         start_ts = _time.monotonic()

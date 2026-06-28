@@ -13,22 +13,21 @@ class User:
     # ID lấy từ root của semester_info API (ví dụ: 14)
     semester_root_id: Optional[int] = None 
     
-    @property
-    def course_url(self) -> str:
-        return f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/findByPeriod/{self.student_id}/{self.semester_id}"
+    def course_url(self, semester_id: Optional[int] = None) -> str:
+        """findByPeriod endpoint. semester_id defaults to the main
+        semester; pass semester_summer_id to query the summer semester.
+        """
+        sid = semester_id if semester_id is not None else self.semester_id
+        return f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/findByPeriod/{self.student_id}/{sid}"
 
-    @property
-    def register_url(self) -> str:
-        return f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/add-register/{self.student_id}/{self.semester_id}"
+    def register_url(self, semester_id: Optional[int] = None) -> str:
+        """add-register endpoint. semester_id defaults to the main
+        semester; pass semester_summer_id to register into the summer
+        semester.
+        """
+        sid = semester_id if semester_id is not None else self.semester_id
+        return f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/add-register/{self.student_id}/{sid}"
 
-    @property
-    def course_summer_url(self) -> str:
-        return f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/findByPeriod/{self.student_id}/{self.semester_summer_id}"
-
-    @property
-    def register_summer_url(self) -> str:
-        return f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/add-register/{self.student_id}/{self.semester_summer_id}"
-    
     @property
     def schedule_url(self) -> str:
         # Sử dụng semester_root_id theo đúng quan sát mới nhất
