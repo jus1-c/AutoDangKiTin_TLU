@@ -534,16 +534,17 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
             return
         self._populated = True
         table = self.query_one("#picker-table", DataTable)
-        # Explicit widths so all 4 columns fit on ~80-col screens.
-        # Layout: ✓ N/M | Tên lớp | Lịch (all buổi) | GV
-        # Date is dropped from the picker Lịch cell (still shown in the
-        # builder's multi-line cell after a class is picked). Sĩ số is
-        # folded into the marker column to save space.
-        table.add_column("✓ N/M", width=7, key="col-pick")
-        table.add_column("Tên lớp", width=24, key="col-name")
-        table.add_column("Lịch", width=20, key="col-lich")
-        table.add_column("GV", width=22, key="col-gv")
-        cursor_target = 0
+
+        def _truncate(text: str, max_len: int) -> str:
+            if len(text) <= max_len:
+                return text
+            if max_len <= 1:
+                return text[:max_len]
+            return text[: max_len - 1] + "…"
+
+        # ---------- 1) Build all cell data first ----------
+        # We need every cell's content before we can size the columns.
+        rows_data: List[Dict[str, Any]] = []
         for i, opt in enumerate(self.options):
             conflict = any(opt.conflicts_with(o) for o in self.other_selected)
             chosen = opt == self.current
@@ -558,30 +559,84 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
                 style = "#cad3f5"
                 mark = "○"
 
-            # Lịch cell: ALL buổi (no date here — date is in the builder
-            # cell after a class is picked). e.g. "T2: 1-3, T4: 4-6, T6: 7-9".
+            # Cell values — no client-side truncation; widths will scale
+            # to fit instead so users always see the full info.
             sessions = opt.sessions_summary or "—"
-            if len(sessions) > 18:
-                sessions = sessions[:17] + "…"
             name = opt.display_name
-            if len(name) > 22:
-                name = name[:21] + "…"
             sisos = f"{mark} {opt.current_students}/{opt.max_students}"
             gv = opt.teacher_name or "—"
-            if len(gv) > 20:
-                gv = gv[:19] + "…"
 
-            table.add_row(
-                RichText(sisos, style=style),
-                RichText(name, style=style),
-                RichText(sessions, style=style),
-                RichText(gv, style=style),
-                key=str(i),
-            )
-            if chosen:
-                cursor_target = i
-            elif cursor_target == 0 and i not in self._conflict_idx and not chosen:
-                cursor_target = i
+            rows_data.append({
+                "i": i,
+                "raw": [sisos, name, sessions, gv],
+                "style": style,
+                "chosen": chosen,
+                "conflict": conflict,
+            })
+
+        # ---------- 2) Truncate each cell to a per-column cap, then size ----------
+        # Per-column hard caps (cells longer than this get truncated with
+        # ellipsis). Keeps one oversized name from eating the whole table.
+        # Order: [marker, name, lich, gv]
+        # Tên lớp capped aggressively (18) so the table always fits even
+        # on 80-col screens; Lịch and GV get their natural width.
+        caps = [8, 18, 28, 22]
+        headers = ["✓ N/M", "Tên lớp", "Lịch", "GV"]
+        for row in rows_data:
+            row["truncated"] = [_truncate(val, caps[c]) for c, val in enumerate(row["raw"])]
+
+        natural = [max(len(headers[c]), 4) for c in range(4)]
+        for row in rows_data:
+            for c, val in enumerate(row["truncated"]):
+                if len(val) > natural[c]:
+                    natural[c] = len(val)
+        # Add 2 padding chars per column (DataTable reserves 1 on each side)
+        natural = [w + 2 for w in natural]
+
+        # ---------- 3) Scale to available width ----------
+        # Picker modal: width 98% of screen, padding 1 each side, border 1
+        # each side. Subtracting 8 chars of chrome to be safe.
+        screen_w = max(40, self.app.size.width) if self.app.size else 80
+        available = max(40, int(screen_w) - 8)
+        total = sum(natural)
+        widths = list(natural)
+        if total > available:
+            # Tên lớp shrinks first (it has the longest, least critical
+            # text — descriptive only). Lịch + GV are info-dense and
+            # should keep their natural width. Marker is fixed.
+            shrink_priority = [0, 3, 1, 1]  # higher = shrinks earlier
+            order = sorted(range(4), key=lambda c: (-shrink_priority[c], -widths[c]))
+            for c in order:
+                if sum(widths) <= available:
+                    break
+                can_shrink = widths[c] - 4  # never go below 4
+                shrink = min(can_shrink, sum(widths) - available)
+                if shrink > 0:
+                    widths[c] -= shrink
+            # Final cleanup so widths sum exactly to `available`.
+            diff = available - sum(widths)
+            if diff > 0:
+                for c in order:
+                    if diff <= 0:
+                        break
+                    give = min(diff, 4)
+                    widths[c] += give
+                    diff -= give
+
+        # ---------- 4) Add columns with computed widths ----------
+        keys = ["col-pick", "col-name", "col-lich", "col-gv"]
+        for header, w, k in zip(headers, widths, keys):
+            table.add_column(header, width=w, key=k)
+
+        # ---------- 5) Add rows (cells already truncated in step 2) ----------
+        cursor_target = 0
+        for row in rows_data:
+            cells = [RichText(t, style=row["style"]) for t in row["truncated"]]
+            table.add_row(*cells, key=str(row["i"]))
+            if row["chosen"]:
+                cursor_target = row["i"]
+            elif cursor_target == 0 and not row["conflict"] and not row["chosen"]:
+                cursor_target = row["i"]
 
         table.focus()
         try:

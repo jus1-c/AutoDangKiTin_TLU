@@ -22,19 +22,19 @@ class TimeBlock:
     room_name: str = ""
 
     def conflicts_with(self, other: 'TimeBlock') -> bool:
-        # 1. Check Date Range Intersection (Phase check)
-        # Conflict if intervals overlap: StartA <= EndB AND StartB <= EndA
-        if not (self.start_date <= other.end_date and other.start_date <= self.end_date):
-            return False
+        """Two blocks conflict if they share the same day-of-week AND
+        their period ranges overlap.
 
-        # 2. Check Day of Week
+        Date range is intentionally NOT checked — it's a secondary
+        factor. In practice, any two classes on the same day + overlapping
+        periods would block each other regardless of the exact semester
+        start/end dates (you can't be in two places at once).
+        """
         if self.week_index != other.week_index:
             return False
-
-        # 3. Check Period Intersection
-        if (self.start_period <= other.end_period and other.start_period <= self.end_period):
+        if (self.start_period <= other.end_period
+                and other.start_period <= self.end_period):
             return True
-
         return False
 
 
