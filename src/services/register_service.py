@@ -16,13 +16,20 @@ class RegisterService:
         self._semaphore_limit = Config.CONCURRENCY_LIMIT
         self.semaphore = asyncio.Semaphore(self._semaphore_limit)
 
-    async def register_subjects(self, user: User, subject_indices: List[int], all_courses: List[List[Course]], is_summer: bool = False) -> List[Course]:
+    async def register_subjects(self, user: User, subject_indices: List[int], all_courses: List[List[Course]], is_summer: bool = False, on_progress: Optional[LogFn] = None) -> List[Course]:
         """
         Registers for multiple subjects. Returns list of failed courses.
+
+        `on_progress(idx, success, course)` is called after each subject
+        completes (success or failure) so the UI can update per-row status
+        in real time. The registration tasks themselves still run
+        concurrently — we just await them in submission order to report
+        progress sequentially.
         """
         url = user.register_summer_url if is_summer else user.register_url
-        
+
         tasks = []
+        subject_info = []  # (idx, first_course) for progress reporting
         failed_courses_to_sniff = []
 
         print("Đang chuẩn bị đăng ký...")
@@ -32,27 +39,46 @@ class RegisterService:
             if not subject_group:
                 continue
             tasks.append(self.register_single_subject(url, subject_group, failed_courses_to_sniff))
+            subject_info.append((idx, subject_group[0] if subject_group else None))
 
         if not tasks:
             print("Không có môn nào để đăng ký.")
             return []
 
         print("Đang gửi yêu cầu đăng ký...")
-        await asyncio.gather(*tasks)
-        
-        # Don't auto-loop here, return to UI controller
+        # Await each in submission order so on_progress fires per-subject.
+        # Tasks themselves still run concurrently via asyncio.create_task
+        # inside register_single_subject (they share the semaphore).
+        for (idx, first_course), task in zip(subject_info, tasks):
+            success = await task
+            if on_progress is not None:
+                try:
+                    on_progress(idx, success, first_course)
+                except Exception:
+                    pass
+
         return failed_courses_to_sniff
 
-    async def register_custom(self, user: User, courses: List[Course]) -> List[Course]:
-        """Registers a specific list of courses. Returns failed courses."""
-        url = user.register_url 
-        
+    async def register_custom(self, user: User, courses: List[Course], on_progress: Optional[LogFn] = None) -> List[Course]:
+        """Registers a specific list of courses. Returns failed courses.
+
+        `on_progress(course, success)` is called after each course finishes.
+        """
+        url = user.register_url
+
         failed_courses = []
         tasks = []
         for course in courses:
              tasks.append(self.register_single_subject(url, [course], failed_courses))
-             
-        await asyncio.gather(*tasks)
+
+        # Await in submission order for per-course progress reporting.
+        for course, task in zip(courses, tasks):
+            success = await task
+            if on_progress is not None:
+                try:
+                    on_progress(course, success)
+                except Exception:
+                    pass
         return failed_courses
 
     async def register_single_subject(self, url: str, courses: List[Course], failed_list: List[Course]) -> bool:

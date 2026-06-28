@@ -143,23 +143,57 @@ class ToggleSwitch(Static, can_focus=True):
 # ---------- log screen (reused across actions) ----------
 
 
+# Status states for the in-progress registration table.
+STATUS_PENDING = ("⏳", "#a5adcb", "Chờ")
+STATUS_SENDING = ("⌛", "#f5a97f", "Đang gửi")
+STATUS_SUCCESS = ("✓", "#a6da95", "Thành công")
+STATUS_FAILED = ("✗", "#ed8796", "Sĩ số full")
+STATUS_SNIFFING = ("⟳", "#8aadf4", "Đang săn")
+STATUS_DONE = ("•", "#5b6078", "Sĩ số full, đã săn xong")
+
+# Map key (string from caller) → current status tuple. The screen reads
+# this on push so the worker can look up which row to update.
+STATUS_KEYS: Dict[str, str] = {}
+
+
 class LogScreen(Screen):
-    """Generic screen with a RichLog for live output + a Stop button."""
+    """Live-progress screen with a status table (top) + RichLog (bottom).
+
+    Top half: a DataTable showing each subject being registered, with a
+    real-time status cell (⏳ pending, ⌛ sending, ✓ success, ✗ failed,
+    ⟳ sniffing, • done). Rows are colored by status.
+
+    Bottom half: a RichLog capturing stdout from the worker so existing
+    service `print()` calls still show up unchanged.
+
+    Worker coroutines receive a LogCaptureContext that exposes
+    `update_status(key, status, message)` to drive the table.
+    """
 
     BINDINGS = [
         Binding("ctrl+c", "stop", "Dừng", show=True),
     ]
 
-    def __init__(self, title: str = "Logs"):
+    def __init__(self, title: str = "Logs", status_rows: Optional[List[Dict[str, Any]]] = None):
         super().__init__()
         self.title_text = title
         self.stop_event = asyncio.Event()
         self.worker_handle = None
+        # status_rows: list of {"key", "code", "lich"} dicts to seed the
+        # status table on mount. The worker updates rows by key.
+        self.status_rows = status_rows or []
+        # Internal map: row_key → DataTable row_key
+        self._row_keys: Dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Container(id="log-container"):
             yield Label(self.title_text, id="log-title")
+            yield DataTable(
+                id="status-table",
+                zebra_stripes=True,
+                cursor_type="row",
+            )
             yield RichLog(id="log", highlight=False, markup=False, wrap=False, max_lines=5000)
             with Horizontal(id="log-buttons"):
                 yield Button("Dừng", id="stop-btn", variant="error")
@@ -167,6 +201,31 @@ class LogScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        table = self.query_one("#status-table", DataTable)
+        table.add_columns("STT", "Mã lớp", "Lịch", "Trạng thái", "Tin nhắn")
+        # Pre-populate from status_rows
+        for i, row in enumerate(self.status_rows, 1):
+            icon, _color, label = STATUS_PENDING
+            key = row["key"]
+            row_key = f"r{i}"
+            self._row_keys[key] = row_key
+            table.add_row(
+                str(i),
+                RichText(row["code"] or "—", style="#cad3f5"),
+                RichText(row["lich"] or "—", style="#cad3f5"),
+                RichText(f"{icon} {label}", style="#a5adcb"),
+                RichText("", style="#5b6078"),
+                key=row_key,
+            )
+        # Set column widths so status is visible
+        cols = list(table.columns.values())
+        widths = [5, 22, 22, 18, None]  # None = auto-size
+        for col, w in zip(cols, widths):
+            if w is None:
+                col.auto_width = True
+            else:
+                col.auto_width = False
+                col.width = w
         self.query_one("#stop-btn", Button).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -179,6 +238,30 @@ class LogScreen(Screen):
         self.stop_event.set()
         self.query_one("#log", RichLog).write("[Đã yêu cầu dừng...]")
 
+    def update_status(self, key: str, status: tuple, message: str = "") -> None:
+        """Update a status row. `status` is a STATUS_* tuple."""
+        row_key_str = self._row_keys.get(key)
+        if row_key_str is None:
+            return
+        try:
+            table = self.query_one("#status-table", DataTable)
+        except Exception:
+            return
+        icon, color, label = status
+        # Locate the actual RowKey for this row + ColumnKey for each cell
+        try:
+            row_key = table.rows[row_key_str].key
+        except KeyError:
+            return
+        # columns: list of (ColumnKey, Column) in declaration order
+        col_keys = list(table.columns.keys())
+        if len(col_keys) < 5:
+            return
+        status_col, msg_col = col_keys[3], col_keys[4]
+        table.update_cell(row_key, status_col, RichText(f"{icon} {label}", style=color))
+        if message:
+            table.update_cell(row_key, msg_col, RichText(message, style=color))
+
     def run_async(
         self,
         coro_factory: Callable[["LogCaptureContext"], Awaitable[Any]],
@@ -186,9 +269,13 @@ class LogScreen(Screen):
         """Run a coroutine in a Textual worker, capturing its stdout."""
         self.stop_event.clear()
         log_widget = self.query_one("#log", RichLog)
+        # Expose update_status via the context so workers can drive it
+        # without holding a direct reference to the screen.
+        ctx = LogCaptureContext(
+            log_widget, self.stop_event, update_fn=self.update_status
+        )
 
         async def _runner():
-            ctx = LogCaptureContext(log_widget, self.stop_event)
             try:
                 with capture_stdout(log_widget):
                     await coro_factory(ctx)
@@ -204,11 +291,13 @@ class LogScreen(Screen):
 
 
 class LogCaptureContext:
-    """Passed to worker coroutines: exposes log() and should_stop()."""
+    """Passed to worker coroutines: exposes log/should_stop/update_status."""
 
-    def __init__(self, log_widget: RichLog, stop_event: asyncio.Event):
+    def __init__(self, log_widget: RichLog, stop_event: asyncio.Event,
+                 update_fn: Optional[Callable[[str, tuple, str], None]] = None):
         self.log_widget = log_widget
         self.stop_event = stop_event
+        self._update_status = update_fn
 
     def log(self, msg: str) -> None:
         self.log_widget.write(msg)
@@ -218,6 +307,18 @@ class LogCaptureContext:
 
     def print(self, msg: str) -> None:
         self.log_widget.write(msg)
+
+    def update_status(self, key: str, status: tuple, message: str = "") -> None:
+        """Update a status row in the LogScreen table.
+
+        `key` must match a key the screen was seeded with.
+        `status` is one of the STATUS_* tuples defined above.
+        """
+        if self._update_status is not None:
+            try:
+                self._update_status(key, status, message)
+            except Exception:
+                pass
 
 
 # ---------- login screen ----------
@@ -459,26 +560,60 @@ class RegisterScreen(Screen):
             self.notify("Chưa chọn môn hoặc chưa tải dữ liệu.", severity="warning")
             return
 
-        log_screen = LogScreen("Đăng ký nhanh")
+        # Build seed rows for the LogScreen status table. Key by the
+        # subject_idx so the worker can look up rows by idx.
+        status_rows: List[Dict[str, Any]] = []
+        for idx in indices:
+            group = self.courses[idx]
+            if not group:
+                continue
+            first = group[0]
+            status_rows.append({
+                "key": f"subj_{idx}",
+                "code": first.code or first.display_name,
+                "lich": first.sessions_summary or "—",
+            })
+        log_screen = LogScreen("Đăng ký nhanh", status_rows=status_rows)
         self.app.push_screen(log_screen)
 
         async def _work(ctx: LogCaptureContext):
             register: RegisterService = self.services["register"]
+            is_summer = self._is_summer()
+
+            def on_progress(idx: int, success: bool, course) -> None:
+                key = f"subj_{idx}"
+                if success:
+                    msg = f"Đã đăng ký (lớp {course.code if course else '?'})"
+                    ctx.update_status(key, STATUS_SUCCESS, msg)
+                else:
+                    ctx.update_status(key, STATUS_FAILED, "Sĩ số full / lỗi")
+
             try:
                 failed = await register.register_subjects(
-                    self.user, indices, self.courses, self._is_summer()
+                    self.user, indices, self.courses, is_summer,
+                    on_progress=on_progress,
                 )
                 if failed and Config.AUTO_SNIFF_FALLBACK and not ctx.should_stop():
                     ctx.log(f"[AUTO] {len(failed)} môn fail -> chuyển sang sniffing.")
-                    await register.sniffing_loop(
+                    # Mark failed rows as sniffing (best-effort key match)
+                    for course in failed:
+                        ctx.update_status(
+                            f"course_{id(course)}", STATUS_SNIFFING, "Đang săn slot..."
+                        )
+                    sniff_failed = await register.sniffing_loop(
                         self.user,
                         failed,
-                        self._is_summer(),
+                        is_summer,
                         interval=Config.SNIFF_INTERVAL,
                         jitter=Config.SNIFF_JITTER,
                         on_log=ctx.log,
                         should_stop=ctx.should_stop,
                     )
+                    # After sniff, mark any still-failed as DONE
+                    for course in (failed if not sniff_failed else sniff_failed):
+                        ctx.update_status(
+                            f"course_{id(course)}", STATUS_DONE, "Đã săn xong (vẫn fail)"
+                        )
                 elif failed and not Config.AUTO_SNIFF_FALLBACK:
                     ctx.log(f"[INFO] {len(failed)} môn fail. Tự fallback đã TẮT trong Settings.")
             except Exception as e:  # noqa: BLE001
@@ -969,16 +1104,39 @@ class ProfileScreen(Screen):
             self.notify(f"Lỗi đọc file: {e}", severity="error")
             return
 
-        log_screen = LogScreen(f"Profile: {key}")
+        # Seed the LogScreen status table with one row per target course.
+        status_rows: List[Dict[str, Any]] = [
+            {
+                "key": f"course_{id(c)}",
+                "code": c.code or c.display_name,
+                "lich": c.sessions_summary or "—",
+            }
+            for c in target_courses
+        ]
+        log_screen = LogScreen(f"Profile: {key}", status_rows=status_rows)
         self.app.push_screen(log_screen)
 
         async def _work(ctx: LogCaptureContext):
             register: RegisterService = self.services["register"]
+
+            def on_progress(course, success: bool) -> None:
+                key = f"course_{id(course)}"
+                if success:
+                    ctx.update_status(key, STATUS_SUCCESS, f"Đã đăng ký (lớp {course.code})")
+                else:
+                    ctx.update_status(key, STATUS_FAILED, "Sĩ số full / lỗi")
+
             try:
-                failed = await register.register_custom(self.user, target_courses)
+                failed = await register.register_custom(
+                    self.user, target_courses, on_progress=on_progress
+                )
                 if failed and Config.AUTO_SNIFF_FALLBACK and not ctx.should_stop():
                     ctx.log(f"[AUTO] {len(failed)} môn fail -> chuyển sang sniffing.")
-                    await register.sniffing_loop(
+                    for course in failed:
+                        ctx.update_status(
+                            f"course_{id(course)}", STATUS_SNIFFING, "Đang săn slot..."
+                        )
+                    sniff_failed = await register.sniffing_loop(
                         self.user,
                         failed,
                         False,
@@ -987,6 +1145,10 @@ class ProfileScreen(Screen):
                         on_log=ctx.log,
                         should_stop=ctx.should_stop,
                     )
+                    for course in (failed if not sniff_failed else sniff_failed):
+                        ctx.update_status(
+                            f"course_{id(course)}", STATUS_DONE, "Đã săn xong (vẫn fail)"
+                        )
                 elif failed and not Config.AUTO_SNIFF_FALLBACK:
                     ctx.log(f"[INFO] {len(failed)} môn fail. Tự fallback đã TẮT trong Settings.")
             except Exception as e:  # noqa: BLE001
@@ -1360,6 +1522,12 @@ class TLUApp(App):
         text-style: bold;
         color: #c6a0f6;
         padding-bottom: 1;
+    }
+    #status-table {
+        height: auto;
+        max-height: 12;
+        margin-bottom: 1;
+        border: round #5b6078;
     }
     #log {
         height: 1fr;
