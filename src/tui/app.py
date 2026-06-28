@@ -412,9 +412,20 @@ class RegisterScreen(Screen):
     async def _load_courses(self) -> None:
         table = self.query_one("#courses-table", DataTable)
         table.clear()
+        is_summer = self._is_summer()
+        sem_id = (
+            self.user.semester_summer_id if is_summer else self.user.semester_id
+        )
+        url = (
+            self.user.course_summer_url if is_summer else self.user.course_url
+        )
+        print(
+            f"[UI] Load courses: summer={is_summer}, "
+            f"semester_id={sem_id}, url={url}"
+        )
         try:
             self.courses, self.names = await self.services["course"].fetch_courses(
-                self.user, self._is_summer()
+                self.user, is_summer
             )
             for i, name in enumerate(self.names):
                 if not self.courses[i]:
@@ -430,6 +441,7 @@ class RegisterScreen(Screen):
                 )
         except Exception as e:  # noqa: BLE001
             self.notify(f"Lỗi tải môn: {e}", severity="error")
+            print(f"[UI] Load courses FAILED: {e}")
 
     async def _run_register(self) -> None:
         table = self.query_one("#courses-table", DataTable)
@@ -515,9 +527,20 @@ class SniffScreen(Screen):
     async def _load_courses(self) -> None:
         table = self.query_one("#courses-table", DataTable)
         table.clear()
+        is_summer = self._is_summer()
+        sem_id = (
+            self.user.semester_summer_id if is_summer else self.user.semester_id
+        )
+        url = (
+            self.user.course_summer_url if is_summer else self.user.course_url
+        )
+        print(
+            f"[UI] Load courses: summer={is_summer}, "
+            f"semester_id={sem_id}, url={url}"
+        )
         try:
             self.courses, self.names = await self.services["course"].fetch_courses(
-                self.user, self._is_summer()
+                self.user, is_summer
             )
             for i, name in enumerate(self.names):
                 if not self.courses[i]:
@@ -533,6 +556,7 @@ class SniffScreen(Screen):
                 )
         except Exception as e:  # noqa: BLE001
             self.notify(f"Lỗi tải môn: {e}", severity="error")
+            print(f"[UI] Load courses FAILED: {e}")
 
     async def _run_sniff(self) -> None:
         table = self.query_one("#courses-table", DataTable)

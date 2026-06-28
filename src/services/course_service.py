@@ -17,25 +17,41 @@ class CourseService:
         Returns a tuple: (List of Course Lists (grouped by subject), List of Subject Names)
         """
         url = user.course_summer_url if is_summer else user.course_url
-        print(f"[INFO] Fetching courses from: {url}")
-        
+        sem_id = user.semester_summer_id if is_summer else user.semester_id
+        print(f"[INFO] Fetching courses (summer={is_summer}, semester_id={sem_id})")
+        print(f"[INFO] URL: {url}")
+
         filename = "all_course_summer.json" if is_summer else "all_course.json"
         filepath = os.path.join(Config.RES_DIR, filename)
-        
+
         data = None
 
         try:
             response = await self.client.request("GET", url)
+            print(f"[INFO] Response status: {response.status_code}")
             if response.status_code == 200:
                 if not response.text.strip():
                     print("[WARNING] API returned empty body.")
-                    raise Exception("Empty response from API")
-                    
+                    raise Exception(
+                        f"API trả về body rỗng (semester_id={sem_id}, URL={url})"
+                    )
+
                 data = response.json()
                 with open(filepath, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
             else:
-                raise Exception(f"Failed to fetch courses: {response.status_code}")
+                # Try to extract server-provided error message
+                server_msg = ""
+                try:
+                    err_body = response.json()
+                    if isinstance(err_body, dict):
+                        server_msg = err_body.get("message") or err_body.get("error") or ""
+                except Exception:
+                    server_msg = (response.text or "")[:200]
+                raise Exception(
+                    f"API lỗi {response.status_code} "
+                    f"(semester_id={sem_id}): {server_msg or response.reason_phrase}"
+                )
         except Exception as e:
             print(f"[WARNING] Fetch failed ({e}). Trying to load from cache.")
             if os.path.exists(filepath):
@@ -50,7 +66,10 @@ class CourseService:
                 data = None
 
         if not data:
-            raise Exception("Không thể tải dữ liệu môn học (API lỗi & không có Cache).")
+            raise Exception(
+                f"Không thể tải dữ liệu môn học (semester_id={sem_id}, "
+                f"is_summer={is_summer}). API lỗi & không có Cache."
+            )
 
         # Lưu metadata
         try:
