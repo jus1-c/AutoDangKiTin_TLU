@@ -9,6 +9,7 @@ if getattr(sys, 'frozen', False):
 else:
     load_dotenv()
 
+
 class Config:
     # TLU URLs
     TLU_LOGIN_URL = os.getenv("TLU_LOGIN_URL")

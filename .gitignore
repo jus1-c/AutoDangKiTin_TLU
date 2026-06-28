@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+.codegraph/
+res/login.json
+res/token.json
+res/token_google.json
+res/custom/*.json
+res/all_course.json
+res/all_course_summer.json
+res/schedule.ics
+res/user_info.json
+.env
