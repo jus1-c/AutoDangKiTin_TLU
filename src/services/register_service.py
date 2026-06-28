@@ -173,14 +173,27 @@ class RegisterService:
 
         `on_log(msg)` is called for user-facing log lines; `should_stop()` is
         polled each iteration and should return True to abort cleanly.
+
+        Verbose logging tracks:
+          - iteration count + elapsed time per poll
+          - per-course status (slot trống / sĩ số full / không còn trong DS)
+          - HTTP errors with status code + body excerpt
+          - per-poll "all full" heartbeat so the user knows the loop is alive
+          - final summary: tổng vòng, tổng TG, số lần phát hiện slot, số lần
+            đăng ký OK, số lần fail
         """
+        import time as _time
+
         def log(msg: str) -> None:
-            print(msg)
+            # Use on_log if provided (TUI: writes to log_widget; CLI: pass
+            # `print` as on_log). Fallback to print if no on_log at all.
             if on_log:
                 try:
                     on_log(msg)
                 except Exception:
                     pass
+            else:
+                print(msg)
 
         def stopped() -> bool:
             return bool(should_stop and should_stop())
@@ -193,47 +206,177 @@ class RegisterService:
         register_url = user.register_summer_url if is_summer else user.register_url
 
         targets: List[Course] = list(courses)
-        log(f"Bắt đầu săn {len(targets)} môn (interval ~{interval}s).")
+        start_ts = _time.monotonic()
+        stats = {
+            "polls": 0,
+            "slots_detected": 0,
+            "register_attempts": 0,
+            "register_successes": 0,
+            "register_failures": 0,
+            "network_errors": 0,
+            "missing_courses": set(),  # codes that disappeared
+        }
+
+        log(f"[SNIFF] === BẮT ĐẦU SĂN {len(targets)} MÔN ===")
+        for c in targets:
+            log(f"  • {c.code} | GV: {c.teacher_name or '?'} | Lịch: {c.sessions_summary or '?'}")
+        log(f"[SNIFF] interval ~{interval}s (±{jitter}s jitter) | "
+            f"endpoint: {list_url}")
 
         while targets and not stopped():
+            iter_start = _time.monotonic()
+            stats["polls"] += 1
+            poll_no = stats["polls"]
+            elapsed = iter_start - start_ts
+            log(f"[SNIFF] ── Vòng #{poll_no} (đã chạy {elapsed:.1f}s) ── "
+                f"check {len(targets)} môn...")
+
+            # --- 1) GET the course list ---
             try:
                 response = await self.client.request("GET", list_url)
+                status = getattr(response, "status_code", "?")
+                if status != 200:
+                    stats["network_errors"] += 1
+                    body_excerpt = (getattr(response, "text", "") or "")[:200]
+                    log(f"[SNIFF] ⚠ HTTP {status} từ list endpoint. Body: {body_excerpt!r}")
+                    if 400 <= status < 500:
+                        log("[SNIFF] ⚠ Client error (4xx) — kiểm tra token/session. "
+                            "Có thể phiên đăng nhập đã hết hạn.")
+                    await self._sleep_interval(interval, jitter, stopped)
+                    continue
                 data = response.json()
             except Exception as e:
-                log(f"[SNIFF] Lỗi tải danh sách: {e}. Thử lại sau interval.")
+                stats["network_errors"] += 1
+                log(f"[SNIFF] ⚠ Lỗi mạng khi tải DS: {type(e).__name__}: {e}. "
+                    f"Thử lại sau interval.")
                 await self._sleep_interval(interval, jitter, stopped)
                 continue
 
+            # --- 2) Validate response structure ---
+            if not isinstance(data, dict) or 'courseRegisterViewObject' not in data:
+                stats["network_errors"] += 1
+                log(f"[SNIFF] ⚠ Response không có 'courseRegisterViewObject'. "
+                    f"Type={type(data).__name__}, keys={list(data.keys())[:5] if isinstance(data, dict) else 'n/a'}")
+                await self._sleep_interval(interval, jitter, stopped)
+                continue
+
+            # --- 3) Per-course check ---
             still_failed: List[Course] = []
+            state_counts = {"empty": 0, "full": 0, "available": 0, "no_field": 0}
+
             for course in targets:
+                if stopped():
+                    log(f"[SNIFF] ⏹ Dừng theo yêu cầu trong vòng #{poll_no}.")
+                    break
+
                 info = await self._find_course_info(data, course.code)
                 if info is None:
-                    log(f"[SNIFF] {course.code}: không còn trong danh sách môn.")
+                    state_counts["empty"] += 1
+                    stats["missing_courses"].add(course.code)
+                    log(f"[SNIFF]   ⚠ {course.code}: KHÔNG còn trong DS môn học. "
+                        f"Có thể lớp đã bị xoá hoặc chưa mở đăng ký.")
+                    # Don't put back into still_failed — this course is GONE.
+                    continue
+
+                if 'isFullClass' not in info:
+                    state_counts["no_field"] += 1
+                    log(f"[SNIFF]   ? {course.code}: response thiếu 'isFullClass'. "
+                        f"Fields: {list(info.keys())[:8]}")
+                    still_failed.append(course)
                     continue
 
                 is_full = bool(info.get('isFullClass'))
                 if is_full:
+                    state_counts["full"] += 1
                     still_failed.append(course)
                     continue
 
-                log(f"[SNIFF] {course.code}: phát hiện slot trống! Gửi yêu cầu đăng ký.")
+                # === SLOT TRỐNG — fire register ===
+                state_counts["available"] += 1
+                stats["slots_detected"] += 1
+                cur = info.get('numberStudent', 0)
+                mx = info.get('maxStudent', 0)
+                log(f"[SNIFF]   ★ {course.code}: SLOT TRỐNG ({cur}/{mx})! "
+                    f"Gửi burst đăng ký...")
+                stats["register_attempts"] += 1
                 success = await self.register_single_subject(register_url, [course], [])
-                if not success:
-                    log(f"[SNIFF] {course.code}: đăng ký vẫn thất bại, tiếp tục săn.")
+                if success:
+                    stats["register_successes"] += 1
+                    log(f"[SNIFF]   ✓ {course.code}: ĐĂNG KÝ THÀNH CÔNG!")
+                else:
+                    stats["register_failures"] += 1
+                    log(f"[SNIFF]   ✗ {course.code}: register fail (slot bị chiếm "
+                        f"ngay khi gửi). Tiếp tục săn.")
                     still_failed.append(course)
 
-            if not still_failed:
-                log("[SNIFF] Đã săn hết.")
+            # --- 4) Per-iteration summary ---
+            n_empty = state_counts["empty"]
+            n_full = state_counts["full"]
+            n_avail = state_counts["available"]
+            n_nofield = state_counts["no_field"]
+            n_remaining = len(still_failed)
+            log(
+                f"[SNIFF]   Kết quả vòng #{poll_no}: "
+                f"trống={n_avail} (đã thử {n_avail}/{n_avail} register) | "
+                f"full={n_full} | mất tích={n_empty} | lỗi_field={n_nofield} | "
+                f"còn lại {n_remaining}/{len(targets)}"
+            )
+
+            # If all targets disappeared from the list, stop with a
+            # clear explanation instead of looping forever.
+            if n_empty == len(targets):
+                log(
+                    f"[SNIFF] ⏹ Tất cả {len(targets)} môn đều không còn trong DS. "
+                    f"Có thể server đã đóng đăng ký hoặc lớp bị xoá. DỪNG săn."
+                )
                 targets = []
                 break
-            targets = still_failed
+
+            if not still_failed:
+                log("[SNIFF] === ĐÃ SĂN HẾT ===")
+                targets = []
+                break
 
             if stopped():
+                log(f"[SNIFF] ⏹ Dừng theo yêu cầu sau vòng #{poll_no}.")
                 break
+
+            targets = still_failed
+
+            # Heartbeat: how long until next poll
+            this_iter_dt = _time.monotonic() - iter_start
+            log(f"[SNIFF]   ⏱ Vòng #{poll_no} mất {this_iter_dt:.2f}s. "
+                f"Đợi ~{interval}s trước vòng #{poll_no + 1}...")
             await self._sleep_interval(interval, jitter, stopped)
 
+        # --- 5) Final summary ---
+        elapsed_total = _time.monotonic() - start_ts
+        summary_lines = [
+            "[SNIFF] === TÓM TẮT ===",
+            f"  Tổng thời gian:    {elapsed_total:.1f}s",
+            f"  Tổng số vòng poll: {stats['polls']}",
+            f"  Lỗi mạng:          {stats['network_errors']}",
+            f"  Slot trống phát hiện:  {stats['slots_detected']}",
+            f"  Register thử:      {stats['register_attempts']}",
+            f"  Register thành công: {stats['register_successes']}",
+            f"  Register thất bại: {stats['register_failures']}",
+        ]
+        if stats["missing_courses"]:
+            summary_lines.append(
+                f"  Môn bị mất tích:   {', '.join(sorted(stats['missing_courses']))}"
+            )
         if targets:
-            log(f"[SNIFF] Dừng. Còn {len(targets)} môn chưa săn được.")
+            summary_lines.append(
+                f"  CÒN {len(targets)} môn chưa săn được: "
+                f"{', '.join(c.code for c in targets)}"
+            )
+            summary_lines.append(
+                f"  ⚠ Lý do có thể: server từ chối (403/401), sĩ số full mãi, "
+                f"hoặc endpoint /add-register bị lỗi."
+            )
+        for line in summary_lines:
+            log(line)
+
         return targets
 
     async def _sleep_interval(self, base: float, jitter: float, should_stop: Optional[StopFn]) -> None:
