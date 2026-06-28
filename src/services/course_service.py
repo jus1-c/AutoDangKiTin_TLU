@@ -11,61 +11,99 @@ class CourseService:
         self.client = client
         self.last_meta = {} # Lưu trữ metadata
 
+    async def _try_fetch_period(
+        self, user: User, is_summer: bool, filepath: str
+    ) -> tuple:
+        """Try to fetch courses for the current user.semester_id / summer_id.
+
+        Returns (data, status_code) on API response, (None, None) on network
+        error. Caller decides what to do with the result.
+        """
+        sem_id = user.semester_summer_id if is_summer else user.semester_id
+        url = user.course_summer_url if is_summer else user.course_url
+        print(f"[INFO]   Try semester_id={sem_id} → {url}")
+        try:
+            response = await self.client.request("GET", url)
+        except Exception as e:
+            print(f"[WARNING]   Network error: {e}")
+            return None, None
+        print(f"[INFO]   Response status: {response.status_code}")
+        if response.status_code == 200 and response.text.strip():
+            data = response.json()
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return data, response.status_code
+        # Extract server error message for logging
+        server_msg = ""
+        try:
+            err_body = response.json()
+            if isinstance(err_body, dict):
+                server_msg = err_body.get("message") or err_body.get("error") or ""
+        except Exception:
+            server_msg = (response.text or "")[:200]
+        print(f"[WARNING]   semester_id={sem_id} failed ({response.status_code}): {server_msg or response.reason_phrase}")
+        return None, response.status_code
+
     async def fetch_courses(self, user: User, is_summer: bool = False) -> Tuple[List[List[Course]], List[str]]:
         """
         Fetches courses from API.
         Returns a tuple: (List of Course Lists (grouped by subject), List of Subject Names)
-        """
-        url = user.course_summer_url if is_summer else user.course_url
-        sem_id = user.semester_summer_id if is_summer else user.semester_id
-        print(f"[INFO] Fetching courses (summer={is_summer}, semester_id={sem_id})")
-        print(f"[INFO] URL: {url}")
 
+        If the primary semester_id fails, automatically tries every other
+        period from semesterRegisterPeriods until one works (auto-fix).
+        """
         filename = "all_course_summer.json" if is_summer else "all_course.json"
         filepath = os.path.join(Config.RES_DIR, filename)
 
-        data = None
+        original_id = (
+            user.semester_summer_id if is_summer else user.semester_id
+        )
+        print(f"[INFO] Fetching courses (summer={is_summer}, original_id={original_id})")
 
-        try:
-            response = await self.client.request("GET", url)
-            print(f"[INFO] Response status: {response.status_code}")
-            if response.status_code == 200:
-                if not response.text.strip():
-                    print("[WARNING] API returned empty body.")
-                    raise Exception(
-                        f"API trả về body rỗng (semester_id={sem_id}, URL={url})"
-                    )
+        # Try the primary ID first
+        data, _ = await self._try_fetch_period(user, is_summer, filepath)
 
-                data = response.json()
-                with open(filepath, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-            else:
-                # Try to extract server-provided error message
-                server_msg = ""
-                try:
-                    err_body = response.json()
-                    if isinstance(err_body, dict):
-                        server_msg = err_body.get("message") or err_body.get("error") or ""
-                except Exception:
-                    server_msg = (response.text or "")[:200]
-                raise Exception(
-                    f"API lỗi {response.status_code} "
-                    f"(semester_id={sem_id}): {server_msg or response.reason_phrase}"
-                )
-        except Exception as e:
-            print(f"[WARNING] Fetch failed ({e}). Trying to load from cache.")
-            if os.path.exists(filepath):
-                try:
-                    with open(filepath, encoding="utf-8") as f:
-                        data = json.load(f)
-                except json.JSONDecodeError:
-                    print("[ERROR] Cache file is corrupted.")
-                    data = None
-            else:
-                print("[ERROR] No cache available.")
+        # If primary failed, fall back to trying every other period
+        if data is None and self.client is not None:
+            try:
+                semester_info = await self.client.get_semester_info()
+                periods = semester_info.get("semesterRegisterPeriods", [])
+            except Exception as e:
+                print(f"[WARNING] Cannot fetch semester info for fallback: {e}")
+                periods = []
+
+            if periods:
+                print(f"[INFO] Primary failed — trying {len(periods)} other periods...")
+                for p in periods:
+                    pid = p.get("id")
+                    if not pid or pid == original_id:
+                        continue
+                    if is_summer:
+                        user.semester_summer_id = pid
+                    else:
+                        user.semester_id = pid
+                    data, _ = await self._try_fetch_period(user, is_summer, filepath)
+                    if data is not None:
+                        print(
+                            f"[INFO] Auto-fixed: {('semester_summer_id' if is_summer else 'semester_id')} "
+                            f"{original_id} → {pid} (data returned)"
+                        )
+                        break
+
+        # Last resort: load from cache
+        if data is None and os.path.exists(filepath):
+            print(f"[WARNING] All API attempts failed; loading from cache {filepath}")
+            try:
+                with open(filepath, encoding="utf-8") as f:
+                    data = json.load(f)
+            except json.JSONDecodeError:
+                print("[ERROR] Cache file is corrupted.")
                 data = None
 
         if not data:
+            sem_id = (
+                user.semester_summer_id if is_summer else user.semester_id
+            )
             raise Exception(
                 f"Không thể tải dữ liệu môn học (semester_id={sem_id}, "
                 f"is_summer={is_summer}). API lỗi & không có Cache."
