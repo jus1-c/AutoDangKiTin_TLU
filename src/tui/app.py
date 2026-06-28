@@ -31,7 +31,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, VerticalScroll
+from textual.containers import Container, Horizontal
 from textual.reactive import reactive
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
@@ -487,18 +487,26 @@ class RegisterScreen(Screen):
         log_screen.run_async(_work)
 
 
-# ---------- class picker modal (conflict-grey) ----------
+# ---------- class picker modal (table with conflict-grey) ----------
 
 
 class ClassPickerScreen(ModalScreen[Optional[Course]]):
     """Modal that lets the user pick one class for a subject.
-    Classes that conflict (in timetable) with the user's other
-    selected classes are shown greyed out with a 'TRÙNG LỊCH' label
-    and cannot be picked. Mirrors the old GUI behavior (main_gui.py).
+
+    Renders a DataTable with one row per class option and the following
+    columns: marker (○/●/✗), Tên lớp, Lịch (Thứ • Tiết), Giáo viên,
+    Ngày, Sĩ số. Classes that conflict with already-selected classes
+    are dimmed and cannot be picked (Enter/dblclick/button all refuse
+    with a bell + notification).
+
+    Enter priority-binding is used so the key always triggers pick
+    (Textual 8.x's DataTable.RowActivated doesn't fire from Enter
+    reliably in headless mode).
     """
 
     BINDINGS = [
         Binding("escape", "cancel", "Hủy"),
+        Binding("enter", "pick_cursor", "Chọn lớp đang trỏ", priority=True),
     ]
 
     def __init__(self, subject_name: str, options: List[Course],
@@ -508,126 +516,91 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
         self.options = options
         self.other_selected = other_selected
         self.current = current
+        self._conflict_idx: set[int] = set()
 
     def compose(self) -> ComposeResult:
         with Container(id="picker-container"):
             yield Label(f"Chọn lớp cho: {self.subject_name}", id="picker-title")
-            with VerticalScroll(id="picker-scroll"):
-                yield Static("", id="picker-list")
+            yield DataTable(id="picker-table", zebra_stripes=True, cursor_type="row")
             with Horizontal(id="picker-buttons"):
-                yield Button("Đóng", id="close-btn", variant="default")
+                yield Button("Chọn lớp đang trỏ (Enter)", id="pick-btn", variant="primary")
+                yield Button("Đóng (Esc)", id="close-btn", variant="default")
 
     def on_mount(self) -> None:
-        self._render_options()
-
-    @staticmethod
-    def _detail(opt: "Course") -> str:
-        """One-line secondary detail: Thứ + tiết + GV + phòng + ngày."""
-        parts: List[str] = []
-        wd = opt.week_day
-        if wd:
-            parts.append(wd)
-        if opt.period_range:
-            parts.append(f"Tiết {opt.period_range}")
-        if opt.teacher_name:
-            parts.append(f"GV: {opt.teacher_name}")
-        if opt.room_name:
-            parts.append(f"P: {opt.room_name}")
-        if opt.date_range:
-            parts.append(opt.date_range)
-        return "  •  ".join(parts)
-
-    def _render_options(self) -> None:
-        host = self.query_one("#picker-list", Static)
-        lines: List[RichText] = []
-        for opt in self.options:
-            conflict = any(opt.conflicts_with(o) for o in self.other_selected)
-            chosen = opt == self.current
-            if conflict:
-                head = RichText(
-                    f"  ✗  {opt.display_name}  "
-                    f"[{opt.current_students}/{opt.max_students}]",
-                    style="#5b6078 dim italic",
-                )
-                tail = RichText(self._detail(opt), style="#5b6078 dim italic")
-                tag = RichText("— TRÙNG LỊCH (không thể chọn)", style="#ed8796 dim italic")
-                lines.extend([head, tail, tag, RichText("")])
-            elif chosen:
-                head = RichText(
-                    f"  ●  {opt.display_name}  "
-                    f"[{opt.current_students}/{opt.max_students}]  — đang chọn",
-                    style="#a6da95 bold",
-                )
-                tail = RichText(self._detail(opt), style="#a6da95")
-                lines.extend([head, tail, RichText("")])
-            else:
-                head = RichText(
-                    f"  ○  {opt.display_name}  "
-                    f"[{opt.current_students}/{opt.max_students}]  — nhấn Enter để chọn",
-                    style="#cad3f5",
-                )
-                tail = RichText(self._detail(opt), style="#8087a2")
-                lines.extend([head, tail, RichText("")])
-        host.update(RichText("\n").join(lines))
-
-    def on_key(self, event) -> None:
-        if event.key in ("up", "down", "j", "k", "enter"):
-            self._handle_nav(event.key)
-
-    def _handle_nav(self, key: str) -> None:
-        if not hasattr(self, "_idx"):
-            self._idx = 0
-        if key == "down" or key == "j":
-            self._idx = (self._idx + 1) % len(self.options)
-            self._refresh_cursor()
-        elif key == "up" or key == "k":
-            self._idx = (self._idx - 1) % len(self.options)
-            self._refresh_cursor()
-        elif key == "enter":
-            opt = self.options[self._idx]
-            if not any(opt.conflicts_with(o) for o in self.other_selected):
-                self.dismiss(opt)
-
-    def _refresh_cursor(self) -> None:
-        host = self.query_one("#picker-list", Static)
-        lines: List[RichText] = []
+        table = self.query_one("#picker-table", DataTable)
+        table.add_columns("", "Tên lớp", "Lịch (Thứ • Tiết)", "Giáo viên", "Ngày", "Sĩ số")
+        cursor_target = 0
         for i, opt in enumerate(self.options):
             conflict = any(opt.conflicts_with(o) for o in self.other_selected)
             chosen = opt == self.current
             if conflict:
-                head = RichText(
-                    f"  ✗  {opt.display_name}  "
-                    f"[{opt.current_students}/{opt.max_students}]",
-                    style="#5b6078 dim italic",
-                )
-                tail = RichText(self._detail(opt), style="#5b6078 dim italic")
-                tag = RichText("— TRÙNG LỊCH (không thể chọn)", style="#ed8796 dim italic")
-                lines.extend([head, tail, tag, RichText("")])
-            elif chosen or i == self._idx:
-                head_style = "#f5a97f bold" if i == self._idx else "#a6da95 bold"
-                head_marker = "▸" if i == self._idx else "●"
-                head_tail = " (đang chọn)" if chosen else ""
-                head = RichText(
-                    f"  {head_marker}  {opt.display_name}  "
-                    f"[{opt.current_students}/{opt.max_students}]{head_tail}",
-                    style=head_style,
-                )
-                tail_style = "#f5a97f" if i == self._idx else "#a6da95"
-                tail = RichText(self._detail(opt), style=tail_style)
-                lines.extend([head, tail, RichText("")])
+                self._conflict_idx.add(i)
+                style = "#5b6078 dim italic"
+                mark = "✗"
+            elif chosen:
+                style = "#a6da95 bold"
+                mark = "●"
             else:
-                head = RichText(
-                    f"  ○  {opt.display_name}  "
-                    f"[{opt.current_students}/{opt.max_students}]",
-                    style="#cad3f5",
-                )
-                tail = RichText(self._detail(opt), style="#8087a2")
-                lines.extend([head, tail, RichText("")])
-        host.update(RichText("\n").join(lines))
+                style = "#cad3f5"
+                mark = "○"
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+            wd = opt.week_day
+            period = opt.period_range
+            lich = (
+                f"{wd} • Tiết {period}" if wd and period
+                else (wd or period or "—")
+            )
+            ngay = opt.date_range or "—"
+            sisos = f"{opt.current_students}/{opt.max_students}"
+
+            table.add_row(
+                RichText(mark, style=style),
+                RichText(opt.display_name, style=style),
+                RichText(lich, style=style),
+                RichText(opt.teacher_name or "—", style=style),
+                RichText(ngay, style=style),
+                RichText(sisos, style=style),
+                key=str(i),
+            )
+            if chosen:
+                cursor_target = i
+            elif cursor_target == 0 and i not in self._conflict_idx and not chosen:
+                cursor_target = i
+
+        table.focus()
+        try:
+            table.cursor_coordinate = (cursor_target, 0)
+        except Exception:
+            pass
+
+    def on_data_table_row_activated(self, event) -> None:
+        """Double-click on a row also tries to pick."""
+        if event.data_table.id == "picker-table":
+            self._try_pick(event.cursor_row)
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close-btn":
             self.dismiss(None)
+        elif event.button.id == "pick-btn":
+            table = self.query_one("#picker-table", DataTable)
+            self._try_pick(table.cursor_row)
+
+    def action_pick_cursor(self) -> None:
+        """Priority-bound: fires on Enter regardless of focus (within modal)."""
+        table = self.query_one("#picker-table", DataTable)
+        self._try_pick(table.cursor_row)
+
+    def _try_pick(self, row: Optional[int]) -> None:
+        if row is None or row < 0 or row >= len(self.options):
+            return
+        if row in self._conflict_idx:
+            self.app.bell()
+            self.notify(
+                "Lớp này trùng lịch với lớp đã chọn — không thể chọn.",
+                severity="warning",
+            )
+            return
+        self.dismiss(self.options[row])
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -643,6 +616,7 @@ class CustomBuilderScreen(Screen):
 
     BINDINGS = [
         Binding("escape", "back", "Quay lại"),
+        Binding("enter", "pick_class", "Chọn lớp (Enter/dblclick)", priority=True),
     ]
 
     def __init__(self, user: User, services: dict):
@@ -674,15 +648,24 @@ class CustomBuilderScreen(Screen):
     def on_mount(self) -> None:
         table = self.query_one("#builder-table", DataTable)
         table.add_columns("STT", "Tên môn", "Lớp đã chọn", "Sĩ số")
+        # Focus table so Enter/dblclick work without an extra click.
+        self.call_after_refresh(table.focus)
 
     def _is_summer(self) -> bool:
         return self.query_one("#summer", ToggleSwitch).value
 
     def on_data_table_row_activated(self, event) -> None:
-        """Enter or double-click on a row → open the class picker for that subject."""
+        """Double-click on a row → open the class picker for that subject."""
         if event.data_table.id == "builder-table":
             self._cursor_row = event.cursor_row
             asyncio.create_task(self._pick_class())
+
+    def action_pick_class(self) -> None:
+        """Priority-bound: Enter on the builder screen → open class picker
+        for the row under the cursor (works without manually focusing
+        the table first).
+        """
+        asyncio.create_task(self._pick_class())
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
@@ -1246,9 +1229,8 @@ class TLUApp(App):
     #picker-container {
         align: center middle;
         padding: 1 2;
-        width: 80;
-        height: auto;
-        max-height: 90%;
+        width: 95%;
+        height: 90%;
         background: #1e2030;
         border: round #5b6078;
     }
@@ -1258,17 +1240,16 @@ class TLUApp(App):
         text-align: center;
         padding-bottom: 1;
     }
-    #picker-scroll {
-        height: auto;
-        max-height: 30;
-        padding: 0 1;
-    }
-    #picker-list {
-        height: auto;
+    #picker-table {
+        height: 1fr;
+        margin: 1 0;
     }
     #picker-buttons {
         align-horizontal: center;
         padding-top: 1;
+    }
+    #picker-buttons Button {
+        margin: 0 1;
     }
 
     /* Log screen */
