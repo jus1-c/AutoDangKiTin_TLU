@@ -196,7 +196,9 @@ class LoginScreen(ModalScreen[Optional[User]]):
             yield Input(value=self._default_user, id="username", placeholder="Mã sinh viên")
             yield Label("Mật khẩu:")
             yield Input(password=True, id="password", placeholder="Mật khẩu")
-            yield Switch("Lưu đăng nhập cho lần sau", value=self._default_save, animate=False, id="save-login")
+            with Horizontal(id="save-login-row"):
+                yield Switch(value=self._default_save, animate=False, id="save-login")
+                yield Label("Lưu đăng nhập cho lần sau")
             yield Static("", id="login-error")
             with Horizontal(id="login-buttons"):
                 yield Button("Đăng nhập", id="login-btn", variant="primary")
@@ -341,7 +343,8 @@ class RegisterScreen(Screen):
         with Container():
             yield Label("ĐĂNG KÝ NHANH", id="reg-title")
             with Horizontal():
-                yield Switch("Học kỳ hè", id="summer", value=False, animate=False)
+                yield Switch(id="summer", value=False, animate=False)
+                yield Label("Học kỳ hè")
                 yield Button("Tải danh sách môn", id="load", variant="primary")
                 yield Button("Đăng ký môn đã chọn", id="run", variant="success")
                 yield Button("Quay lại", id="back")
@@ -445,7 +448,8 @@ class SniffScreen(Screen):
         with Container():
             yield Label("SNIFFING RIÊNG", id="sniff-title")
             with Horizontal():
-                yield Switch("Học kỳ hè", id="summer", value=False, animate=False)
+                yield Switch(id="summer", value=False, animate=False)
+                yield Label("Học kỳ hè")
                 yield Button("Tải danh sách môn", id="load", variant="primary")
                 yield Button("Săn môn đã chọn", id="run", variant="warning")
                 yield Button("Quay lại", id="back")
@@ -711,7 +715,9 @@ class SettingsScreen(Screen):
         yield Header()
         with Container():
             yield Label("SETTINGS", id="set-title")
-            yield Switch("Chế độ Debug", value=Config.DEBUG, animate=False, id="debug")
+            with Horizontal():
+                yield Switch(value=Config.DEBUG, animate=False, id="debug")
+                yield Label("Chế độ Debug")
             with Horizontal():
                 yield Label("Interval sniff (giây):")
                 yield Input(
