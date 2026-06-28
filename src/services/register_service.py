@@ -1,10 +1,14 @@
 import asyncio
+import random
 import httpx
-from typing import List, Optional
+from typing import Callable, List, Optional
 from src.core.client import TLUClient
 from src.models.user import User
 from src.models.course import Course
 from src.config import Config
+
+LogFn = Callable[[str], None]
+StopFn = Callable[[], bool]
 
 class RegisterService:
     def __init__(self, client: TLUClient):
@@ -86,8 +90,124 @@ class RegisterService:
                 except Exception:
                     continue
 
-    # sniffing_loop logic moved to UI controller or kept as utility if needed, 
-    # but for GUI we use the UI loop. Keep it for CLI compatibility if needed.
-    async def sniffing_loop(self, user: User, courses: List[Course], is_summer: bool = False):
-        # CLI version
-        pass
+    async def _find_course_info(self, data: dict, target_code: str) -> Optional[dict]:
+        """
+        Walks the course-list JSON to find a course by code.
+
+        Mirrors the parse depth of CourseService._parse_courses: visits both
+        top-level `courseSubjectDtos` and their nested `subCourseSubjects`
+        (the gốc `find_course_info` bỏ sót `subCourseSubjects`).
+        """
+        if not data or 'courseRegisterViewObject' not in data:
+            return None
+        try:
+            subjects = data['courseRegisterViewObject'].get('listSubjectRegistrationDtos', [])
+        except (KeyError, TypeError, AttributeError):
+            return None
+
+        for subject in subjects:
+            course_dtos = subject.get('courseSubjectDtos', []) or []
+            for course in course_dtos:
+                if course and course.get('code') == target_code:
+                    return course
+                sub_courses = course.get('subCourseSubjects') if course else None
+                if sub_courses:
+                    for sub in sub_courses:
+                        if sub and sub.get('code') == target_code:
+                            return sub
+        return None
+
+    async def sniffing_loop(
+        self,
+        user: User,
+        courses: List[Course],
+        is_summer: bool = False,
+        interval: float = 2.0,
+        jitter: float = 0.5,
+        on_log: Optional[LogFn] = None,
+        should_stop: Optional[StopFn] = None,
+    ) -> List[Course]:
+        """
+        GET-gated check-then-register sniff loop.
+
+        - Polls the course-list endpoint every `interval` (+/- `jitter`) seconds
+          (cheap GET, normal traffic — avoids the ban risk of spamming POST).
+        - Only calls the register endpoint (existing burst) when a target course
+          is found with `isFullClass == False`.
+        - Returns the list of courses that could not be registered before stop.
+
+        `on_log(msg)` is called for user-facing log lines; `should_stop()` is
+        polled each iteration and should return True to abort cleanly.
+        """
+        def log(msg: str) -> None:
+            print(msg)
+            if on_log:
+                try:
+                    on_log(msg)
+                except Exception:
+                    pass
+
+        def stopped() -> bool:
+            return bool(should_stop and should_stop())
+
+        if not courses:
+            log("Không có môn nào để săn.")
+            return []
+
+        list_url = user.course_summer_url if is_summer else user.course_url
+        register_url = user.register_summer_url if is_summer else user.register_url
+
+        targets: List[Course] = list(courses)
+        log(f"Bắt đầu săn {len(targets)} môn (interval ~{interval}s).")
+
+        while targets and not stopped():
+            try:
+                response = await self.client.request("GET", list_url)
+                data = response.json()
+            except Exception as e:
+                log(f"[SNIFF] Lỗi tải danh sách: {e}. Thử lại sau interval.")
+                await self._sleep_interval(interval, jitter, stopped)
+                continue
+
+            still_failed: List[Course] = []
+            for course in targets:
+                info = await self._find_course_info(data, course.code)
+                if info is None:
+                    log(f"[SNIFF] {course.code}: không còn trong danh sách môn.")
+                    continue
+
+                is_full = bool(info.get('isFullClass'))
+                if is_full:
+                    still_failed.append(course)
+                    continue
+
+                log(f"[SNIFF] {course.code}: phát hiện slot trống! Gửi yêu cầu đăng ký.")
+                success = await self.register_single_subject(register_url, [course], [])
+                if not success:
+                    log(f"[SNIFF] {course.code}: đăng ký vẫn thất bại, tiếp tục săn.")
+                    still_failed.append(course)
+
+            if not still_failed:
+                log("[SNIFF] Đã săn hết.")
+                targets = []
+                break
+            targets = still_failed
+
+            if stopped():
+                break
+            await self._sleep_interval(interval, jitter, stopped)
+
+        if targets:
+            log(f"[SNIFF] Dừng. Còn {len(targets)} môn chưa săn được.")
+        return targets
+
+    async def _sleep_interval(self, base: float, jitter: float, should_stop: Optional[StopFn]) -> None:
+        delay = max(0.0, base + random.uniform(-jitter, jitter))
+        deadline = asyncio.get_event_loop().time() + delay
+        while True:
+            if should_stop and should_stop():
+                return
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(remaining, 0.2))
