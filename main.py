@@ -13,8 +13,13 @@ Usage:
 """
 import sys
 
+from src.config import Config
+
 
 def main() -> None:
+    Config.ensure_dirs()
+    Config.load_settings()
+
     # No args: launch TUI
     if len(sys.argv) == 1:
         from src.tui.app import run_tui
