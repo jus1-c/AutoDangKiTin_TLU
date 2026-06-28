@@ -562,7 +562,11 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
             # Cell values — no client-side truncation; widths will scale
             # to fit instead so users always see the full info.
             sessions = opt.sessions_summary or "—"
-            name = opt.display_name
+            # Use the class code (e.g. "252061_SCSO232_65KTRB") instead of
+            # the verbose displayName ("Chủ nghĩa xã hội khoa học-2-25
+            # (65KTRB)"). The subject is already in the modal title; the
+            # class code is the unique identifier users need.
+            name = opt.code or opt.display_name
             sisos = f"{mark} {opt.current_students}/{opt.max_students}"
             gv = opt.teacher_name or "—"
 
@@ -576,11 +580,10 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
 
         # ---------- 2) Truncate each cell to a per-column cap, then size ----------
         # Per-column hard caps (cells longer than this get truncated with
-        # ellipsis). Keeps one oversized name from eating the whole table.
-        # Order: [marker, name, lich, gv]
-        # Tên lớp capped aggressively (18) so the table always fits even
-        # on 80-col screens; Lịch and GV get their natural width.
-        caps = [8, 18, 28, 22]
+        # ellipsis). Order: [marker, name, lich, gv]
+        # Larger caps so each column has more room; scaling below will
+        # shrink columns if the total overflows the screen.
+        caps = [8, 40, 36, 28]
         headers = ["✓ N/M", "Tên lớp", "Lịch", "GV"]
         for row in rows_data:
             row["truncated"] = [_truncate(val, caps[c]) for c, val in enumerate(row["raw"])]
@@ -594,39 +597,49 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
         natural = [w + 2 for w in natural]
 
         # ---------- 3) Scale to available width ----------
-        # Picker modal: width 98% of screen, padding 1 each side, border 1
-        # each side. Subtracting 8 chars of chrome to be safe.
+        # Picker modal: 98% width, padding 1, border 1, container padding 1
+        # → 4 chars of chrome total. Subtract from screen width.
         screen_w = max(40, self.app.size.width) if self.app.size else 80
-        available = max(40, int(screen_w) - 8)
+        available = max(40, int(screen_w) - 4)
         total = sum(natural)
         widths = list(natural)
         if total > available:
-            # Tên lớp shrinks first (it has the longest, least critical
-            # text — descriptive only). Lịch + GV are info-dense and
-            # should keep their natural width. Marker is fixed.
-            shrink_priority = [0, 3, 1, 1]  # higher = shrinks earlier
+            # Tên lớp shrinks first (descriptive only). Lịch + GV are
+            # info-dense — protect them. Marker is fixed.
+            shrink_priority = [0, 3, 1, 1]
             order = sorted(range(4), key=lambda c: (-shrink_priority[c], -widths[c]))
             for c in order:
                 if sum(widths) <= available:
                     break
-                can_shrink = widths[c] - 4  # never go below 4
+                can_shrink = widths[c] - 4
                 shrink = min(can_shrink, sum(widths) - available)
                 if shrink > 0:
                     widths[c] -= shrink
-            # Final cleanup so widths sum exactly to `available`.
-            diff = available - sum(widths)
-            if diff > 0:
-                for c in order:
-                    if diff <= 0:
-                        break
-                    give = min(diff, 4)
-                    widths[c] += give
-                    diff -= give
+        # Always distribute the FULL available width across columns,
+        # even when content is small — avoids the "lots of empty space,
+        # content still truncated" feel.
+        slack = available - sum(widths)
+        if slack > 0:
+            # Give extra space to the columns that can benefit most
+            # (Lịch and GV, which hold the most info-dense data).
+            grow_order = [2, 3, 1, 0]  # lich, gv, name, marker
+            for c in grow_order:
+                if slack <= 0:
+                    break
+                give = min(slack, 6)  # cap per column to avoid one hog
+                widths[c] += give
+                slack -= give
 
-        # ---------- 4) Add columns with computed widths ----------
+        # ---------- 4) Add columns ----------
+        # DataTable in Textual 8.2.7 doesn't respect fixed width hints —
+        # it auto-sizes based on content. So we add columns WITHOUT width,
+        # and pre-truncate cells to match our computed widths (so the
+        # auto-sizer never sees longer content than we want). The result
+        # is columns that fit exactly the truncated content + padding,
+        # which is what the user actually wants to see.
         keys = ["col-pick", "col-name", "col-lich", "col-gv"]
         for header, w, k in zip(headers, widths, keys):
-            table.add_column(header, width=w, key=k)
+            table.add_column(header, key=k)
 
         # ---------- 5) Add rows (cells already truncated in step 2) ----------
         cursor_target = 0
@@ -776,14 +789,16 @@ class CustomBuilderScreen(Screen):
 
     @staticmethod
     def _selected_cell_text(sel: Optional[Course]) -> str:
-        """Cell text for 'Lớp đã chọn'. Two-line: name + sessions/dates detail.
+        """Cell text for 'Lớp đã chọn'. Multi-line: code + sessions + dates.
 
-        Multi-line so a class with many buổi is fully visible:
-          '<display_name>\n  ↳ T2: 1-3, T4: 4-6\n  ↳ 13/04/2026 -> 04/05/2026'
+        Uses the class code (short) on line 1, then sessions and date
+        range on the following lines. The full subject name is already
+        shown in the subject row column, so it would be redundant here.
         """
         if not sel:
             return "---"
-        lines = [sel.display_name]
+        head = sel.code or sel.display_name
+        lines = [head]
         sessions = sel.sessions_summary
         dates = sel.date_range
         if sessions:
