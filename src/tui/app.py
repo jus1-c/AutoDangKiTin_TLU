@@ -1262,6 +1262,9 @@ class SettingsScreen(Screen):
             with Horizontal(id="settings-row"):
                 yield Label("Jitter sniff (giây, ±):")
                 yield Input(value=str(Config.SNIFF_JITTER), id="jitter")
+            with Horizontal(id="settings-row"):
+                yield Label("Giới hạn thời gian sniff (phút, 0 = vô hạn):")
+                yield Input(value=str(Config.SNIFF_MAX_DURATION_MIN), id="max_duration")
             with Horizontal(id="settings-buttons"):
                 yield Button("Lưu", id="save", variant="primary")
                 yield Button("Đăng xuất", id="logout", variant="error")
@@ -1325,6 +1328,9 @@ class SettingsScreen(Screen):
         jitter = self._parse_float("jitter", "Jitter")
         if jitter is None:
             return
+        max_dur = self._parse_int("max_duration", "Max sniff duration")
+        if max_dur is None:
+            return
 
         Config.AUTO_SNIFF_FALLBACK = auto_sniff
         Config.DEBUG = debug
@@ -1332,6 +1338,7 @@ class SettingsScreen(Screen):
         Config.CONCURRENCY_LIMIT = conc
         Config.SNIFF_INTERVAL = interval
         Config.SNIFF_JITTER = jitter
+        Config.SNIFF_MAX_DURATION_MIN = max_dur
         try:
             Config.save_settings()
             self.notify("Đã lưu vào res/settings.json.", severity="information")

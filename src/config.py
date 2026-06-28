@@ -27,6 +27,7 @@ class Config:
     REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", 30))
     SNIFF_INTERVAL = float(os.getenv("SNIFF_INTERVAL", 2.0))
     SNIFF_JITTER = float(os.getenv("SNIFF_JITTER", 0.5))
+    SNIFF_MAX_DURATION_MIN = int(os.getenv("SNIFF_MAX_DURATION_MIN", 60))  # 0 = infinite
     BURST_COUNT = int(os.getenv("BURST_COUNT", 5))
     AUTO_SNIFF_FALLBACK = os.getenv("AUTO_SNIFF_FALLBACK", "True").lower() in ("true", "1", "yes")
     DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
@@ -36,6 +37,7 @@ class Config:
         "CONCURRENCY_LIMIT",
         "SNIFF_INTERVAL",
         "SNIFF_JITTER",
+        "SNIFF_MAX_DURATION_MIN",
         "BURST_COUNT",
         "AUTO_SNIFF_FALLBACK",
         "DEBUG",
