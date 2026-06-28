@@ -61,11 +61,27 @@ class RegisterService:
         return failed_courses_to_sniff
 
     async def register_custom(self, user: User, courses: List[Course], on_progress: Optional[LogFn] = None) -> List[Course]:
-        """Registers a specific list of courses. Returns failed courses.
+        """Registers a specific list of courses into the user's MAIN semester.
+
+        `on_progress(course, success)` is called after each course finishes.
+
+        (Kept for backward compat — prefer register_custom_for_semester
+        when the semester is known.)
+        """
+        return await self.register_custom_for_semester(
+            user, courses, semester_id=user.semester_id, on_progress=on_progress
+        )
+
+    async def register_custom_for_semester(
+        self, user: User, courses: List[Course], semester_id: int,
+        on_progress: Optional[LogFn] = None,
+    ) -> List[Course]:
+        """Registers a specific list of courses into a given semester.
 
         `on_progress(course, success)` is called after each course finishes.
         """
-        url = user.register_url()
+        url = user.register_url(semester_id)
+        print(f"[SNIFF] register_custom → {url}")
 
         failed_courses = []
         tasks = []

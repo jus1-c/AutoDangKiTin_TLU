@@ -1014,8 +1014,14 @@ class CustomBuilderScreen(Screen):
             self.notify("Chưa chọn lớp nào.", severity="warning")
             return
         name = self.query_one("#save-name", Input).value
-        filename = self.custom.save_named(list(self.picks.values()), name)
-        self.notify(f"Đã lưu: {filename}", severity="information")
+        # Lưu kèm semester_id tương ứng với toggle HK hè đang bật, để
+        # khi load profile biết đăng ký cho HK nào.
+        is_summer = self._is_summer()
+        sem_id = self.user.semester_summer_id if is_summer else self.user.semester_id
+        filename = self.custom.save_named(list(self.picks.values()), name,
+                                         semester_id=sem_id)
+        hk = "HK hè" if is_summer else "HK chính"
+        self.notify(f"Đã lưu: {filename} ({hk})", severity="information")
         self.query_one("#save-name", Input).value = ""
 
 
@@ -1047,7 +1053,13 @@ class ProfileScreen(Screen):
 
     def on_mount(self) -> None:
         table = self.query_one("#profile-table", DataTable)
-        table.add_columns("STT", "Tên file")
+        table.add_columns("STT", "Tên file", "Học kỳ", "Số môn")
+        # Sizing: Tên file dài nhất, Học kỳ ngắn, Số môn ngắn.
+        cols = list(table.columns.values())
+        widths = [5, 32, 14, 8]
+        for col, w in zip(cols, widths):
+            col.auto_width = False
+            col.width = w
         self._refresh()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -1067,11 +1079,32 @@ class ProfileScreen(Screen):
     def action_back(self) -> None:
         self.app.pop_screen()
 
+    @staticmethod
+    def _format_hk_label(saved_sem_id: Optional[int], main_sem_id: int, summer_sem_id: int) -> str:
+        """Format the HK cell: 'HK chính (66)' / 'HK hè (78)' / '? (123)' / 'không rõ'."""
+        if saved_sem_id is None:
+            return "không rõ"
+        if saved_sem_id == main_sem_id:
+            return f"HK chính ({main_sem_id})"
+        if saved_sem_id == summer_sem_id:
+            return f"HK hè ({summer_sem_id})"
+        return f"? ({saved_sem_id})"
+
     def _refresh(self) -> None:
         table = self.query_one("#profile-table", DataTable)
         table.clear()
         for i, f in enumerate(self.custom.list_files()):
-            table.add_row(str(i), f, key=f)
+            path = os.path.join(Config.RES_DIR, "custom", f)
+            try:
+                saved_sem_id, courses = CustomService.load_profile(path)
+            except Exception:
+                saved_sem_id, courses = None, []
+            hk_label = self._format_hk_label(
+                saved_sem_id, self.user.semester_id, self.user.semester_summer_id
+            )
+            table.add_row(
+                str(i), f, hk_label, str(len(courses)), key=f,
+            )
 
     def _delete_selected(self) -> None:
         table = self.query_one("#profile-table", DataTable)
@@ -1097,12 +1130,35 @@ class ProfileScreen(Screen):
         key = files[table.cursor_row]
         path = os.path.join(Config.RES_DIR, "custom", key)
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            target_courses = [Course(d) for d in data]
+            saved_sem_id, target_courses = CustomService.load_profile(path)
         except Exception as e:  # noqa: BLE001
             self.notify(f"Lỗi đọc file: {e}", severity="error")
             return
+
+        # Decide which semester to register into:
+        # - If the profile saved a semester_id, use it.
+        # - If no saved id (legacy file), use the current user's main semester.
+        # - If saved id doesn't match any known semester, use the closest.
+        if saved_sem_id == self.user.semester_summer_id:
+            is_summer = True
+        elif saved_sem_id == self.user.semester_id:
+            is_summer = False
+        elif saved_sem_id is None:
+            is_summer = False
+        else:
+            # Unknown id — fall back to main and warn
+            self.notify(
+                f"⚠ Profile lưu semester_id={saved_sem_id} (không phải HK hiện tại). "
+                f"Mặc định dùng HK chính.",
+                severity="warning",
+            )
+            is_summer = False
+        active_sem_id = saved_sem_id if saved_sem_id is not None else self.user.semester_id
+        hk_label = "HK hè" if is_summer else "HK chính"
+        self.notify(
+            f"Đang đăng ký profile: {key} ({hk_label}, id={active_sem_id})",
+            severity="information",
+        )
 
         # Seed the LogScreen status table with one row per target course.
         status_rows: List[Dict[str, Any]] = [
@@ -1113,7 +1169,7 @@ class ProfileScreen(Screen):
             }
             for c in target_courses
         ]
-        log_screen = LogScreen(f"Profile: {key}", status_rows=status_rows)
+        log_screen = LogScreen(f"Profile: {key} ({hk_label})", status_rows=status_rows)
         self.app.push_screen(log_screen)
 
         async def _work(ctx: LogCaptureContext):
@@ -1127,8 +1183,9 @@ class ProfileScreen(Screen):
                     ctx.update_status(key, STATUS_FAILED, "Sĩ số full / lỗi")
 
             try:
-                failed = await register.register_custom(
-                    self.user, target_courses, on_progress=on_progress
+                failed = await register.register_custom_for_semester(
+                    self.user, target_courses, semester_id=active_sem_id,
+                    on_progress=on_progress,
                 )
                 if failed and Config.AUTO_SNIFF_FALLBACK and not ctx.should_stop():
                     ctx.log(f"[AUTO] {len(failed)} môn fail -> chuyển sang sniffing.")
@@ -1139,7 +1196,7 @@ class ProfileScreen(Screen):
                     sniff_failed = await register.sniffing_loop(
                         self.user,
                         failed,
-                        False,
+                        is_summer=is_summer,
                         interval=Config.SNIFF_INTERVAL,
                         jitter=Config.SNIFF_JITTER,
                         on_log=ctx.log,
