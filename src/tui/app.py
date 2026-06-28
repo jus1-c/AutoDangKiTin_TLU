@@ -517,6 +517,7 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
         self.other_selected = other_selected
         self.current = current
         self._conflict_idx: set[int] = set()
+        self._populated = False
 
     def compose(self) -> ComposeResult:
         with Container(id="picker-container"):
@@ -527,8 +528,21 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
                 yield Button("Đóng (Esc)", id="close-btn", variant="default")
 
     def on_mount(self) -> None:
+        # on_mount can fire more than once in some flows (priority-binding
+        # double-trigger, screen re-push, etc.). Guard with a flag.
+        if self._populated:
+            return
+        self._populated = True
         table = self.query_one("#picker-table", DataTable)
-        table.add_columns("", "Tên lớp", "Lịch (Thứ • Tiết)", "Giáo viên", "Ngày", "Sĩ số")
+        # Explicit widths so all 4 columns fit on ~80-col screens.
+        # Layout: ✓ N/M | Tên lớp | Lịch (all buổi) | GV
+        # Date is dropped from the picker Lịch cell (still shown in the
+        # builder's multi-line cell after a class is picked). Sĩ số is
+        # folded into the marker column to save space.
+        table.add_column("✓ N/M", width=7, key="col-pick")
+        table.add_column("Tên lớp", width=24, key="col-name")
+        table.add_column("Lịch (T2:1-3, T4:4-6)", width=20, key="col-lich")
+        table.add_column("GV", width=22, key="col-gv")
         cursor_target = 0
         for i, opt in enumerate(self.options):
             conflict = any(opt.conflicts_with(o) for o in self.other_selected)
@@ -544,22 +558,24 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
                 style = "#cad3f5"
                 mark = "○"
 
-            wd = opt.week_day
-            period = opt.period_range
-            lich = (
-                f"{wd} • Tiết {period}" if wd and period
-                else (wd or period or "—")
-            )
-            ngay = opt.date_range or "—"
-            sisos = f"{opt.current_students}/{opt.max_students}"
+            # Lịch cell: ALL buổi (no date here — date is in the builder
+            # cell after a class is picked). e.g. "T2: 1-3, T4: 4-6, T6: 7-9".
+            sessions = opt.sessions_summary or "—"
+            if len(sessions) > 18:
+                sessions = sessions[:17] + "…"
+            name = opt.display_name
+            if len(name) > 22:
+                name = name[:21] + "…"
+            sisos = f"{mark} {opt.current_students}/{opt.max_students}"
+            gv = opt.teacher_name or "—"
+            if len(gv) > 20:
+                gv = gv[:19] + "…"
 
             table.add_row(
-                RichText(mark, style=style),
-                RichText(opt.display_name, style=style),
-                RichText(lich, style=style),
-                RichText(opt.teacher_name or "—", style=style),
-                RichText(ngay, style=style),
                 RichText(sisos, style=style),
+                RichText(name, style=style),
+                RichText(sessions, style=style),
+                RichText(gv, style=style),
                 key=str(i),
             )
             if chosen:
@@ -705,13 +721,21 @@ class CustomBuilderScreen(Screen):
 
     @staticmethod
     def _selected_cell_text(sel: Optional[Course]) -> str:
-        """Cell text for 'Lớp đã chọn'. Two-line: name + period/date detail."""
+        """Cell text for 'Lớp đã chọn'. Two-line: name + sessions/dates detail.
+
+        Multi-line so a class with many buổi is fully visible:
+          '<display_name>\n  ↳ T2: 1-3, T4: 4-6\n  ↳ 13/04/2026 -> 04/05/2026'
+        """
         if not sel:
             return "---"
-        detail = sel.picker_detail
-        if detail:
-            return f"{sel.display_name}\n  ↳ {detail}"
-        return sel.display_name
+        lines = [sel.display_name]
+        sessions = sel.sessions_summary
+        dates = sel.date_range
+        if sessions:
+            lines.append(f"  ↳ {sessions}")
+        if dates:
+            lines.append(f"  ↳ {dates}")
+        return "\n".join(lines)
 
     def _refresh_table(self) -> None:
         table = self.query_one("#builder-table", DataTable)
@@ -725,7 +749,12 @@ class CustomBuilderScreen(Screen):
             table.add_row(str(i), name, sel_text, f"{c.current_students}/{c.max_students}", key=str(i))
 
     async def _pick_class(self) -> None:
-        table = self.query_one("#builder-table", DataTable)
+        # Guard: don't push a second picker if one is already on the stack
+        # (Enter can fire both the priority binding AND DataTable.RowActivated).
+        for screen in self.app.screen_stack:
+            if isinstance(screen, ClassPickerScreen):
+                return
+        table = self.query_one("#builder-table")
         # Prefer row from a row_activated event if set, else use cursor.
         row = getattr(self, "_cursor_row", None)
         if row is None or row < 0:
@@ -1228,8 +1257,8 @@ class TLUApp(App):
     /* Class picker modal */
     #picker-container {
         align: center middle;
-        padding: 1 2;
-        width: 95%;
+        padding: 1 1;
+        width: 98%;
         height: 90%;
         background: #1e2030;
         border: round #5b6078;

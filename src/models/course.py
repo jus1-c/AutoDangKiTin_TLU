@@ -143,6 +143,30 @@ class Course:
         return f"{unique_dates[0]} -> {unique_dates[-1]}"
 
     @property
+    def date_range_short(self) -> str:
+        """Compact date range: '13/4 → 4/5' (no year). Useful for narrow cells."""
+        blocks = self.time_blocks
+        if not blocks:
+            return ""
+        seen_ts: List[int] = []
+        for b in blocks:
+            if b.start_date not in seen_ts:
+                seen_ts.append(b.start_date)
+        seen_ts.sort()
+        unique = []
+        for ts in seen_ts:
+            try:
+                d = datetime.fromtimestamp(ts / 1000)
+                unique.append(f"{d.day}/{d.month}")
+            except (ValueError, TypeError, OSError):
+                continue
+        if not unique:
+            return ""
+        if len(unique) == 1:
+            return unique[0]
+        return f"{unique[0]} → {unique[-1]}"
+
+    @property
     def picker_detail(self) -> str:
         """Short summary shown in CustomBuilderScreen after a class is picked.
 
@@ -161,6 +185,61 @@ class Course:
         if blocks and 1 <= blocks[0].week_index <= 8:
             return wd[blocks[0].week_index]
         return ""
+
+    @staticmethod
+    def _day_short(idx: int) -> str:
+        """Short day label: 'T2', 'T3', ..., 'CN' (or '' for unknown)."""
+        names = ["", "CN", "T2", "T3", "T4", "T5", "T6", "T7", "CN"]
+        if 1 <= idx <= 8:
+            return names[idx]
+        return ""
+
+    @property
+    def day_periods(self) -> List[str]:
+        """All distinct (day, period) sessions, deduped + ordered by day/period.
+
+        Each entry is like 'T2: 1-3' or 'T4: 5'. Order: by weekIndex then period.
+        """
+        seen: set = set()
+        out: List[str] = []
+        # Sort blocks by (week_index, start_period) for stable display
+        sorted_blocks = sorted(self.time_blocks, key=lambda b: (b.week_index, b.start_period))
+        for tb in sorted_blocks:
+            day = self._day_short(tb.week_index)
+            if tb.start_period == tb.end_period:
+                p = str(tb.start_period)
+            else:
+                p = f"{tb.start_period}-{tb.end_period}"
+            key = (tb.week_index, tb.start_period, tb.end_period)
+            if key in seen:
+                continue
+            seen.add(key)
+            label = f"{day}: {p}" if day else p
+            out.append(label)
+        return out
+
+    @property
+    def sessions_summary(self) -> str:
+        """Compact single-line list of all sessions: 'T2: 1-3, T4: 4-6'."""
+        return ", ".join(self.day_periods)
+
+    @property
+    def sessions_lines(self) -> str:
+        """Multi-line list of all sessions: 'T2: 1-3\\nT4: 4-6' (for cell)."""
+        return "\n".join(self.day_periods)
+
+    @property
+    def picker_detail(self) -> str:
+        """Short summary shown in CustomBuilderScreen after a class is picked.
+
+        Format: 'T2: 1-3, T4: 4-6, 13/04/2026 -> 04/05/2026' — all sessions
+        plus date range. Falls back to whichever half is available.
+        """
+        sessions = self.sessions_summary
+        d = self.date_range
+        if sessions and d:
+            return f"{sessions}, {d}"
+        return sessions or d
 
     def conflicts_with(self, other: 'Course') -> bool:
         """Checks if this course conflicts with another course."""
