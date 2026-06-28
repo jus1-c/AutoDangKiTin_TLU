@@ -710,7 +710,7 @@ class CustomBuilderScreen(Screen):
         self.custom: CustomService = services["custom"]
         self.courses: List[List[Course]] = []
         self.names: List[str] = []
-        self.selections: Dict[int, Course] = {}
+        self.picks: Dict[int, Course] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -774,7 +774,7 @@ class CustomBuilderScreen(Screen):
     async def _load_courses(self) -> None:
         table = self.query_one("#builder-table", DataTable)
         table.clear()
-        self.selections.clear()
+        self.picks.clear()
         try:
             self.courses, self.names = await self.services["course"].fetch_courses(
                 self.user, self._is_summer()
@@ -813,7 +813,7 @@ class CustomBuilderScreen(Screen):
         for i, name in enumerate(self.names):
             if not self.courses[i]:
                 continue
-            sel = self.selections.get(i)
+            sel = self.picks.get(i)
             sel_text = self._selected_cell_text(sel)
             c = self.courses[i][0]
             table.add_row(str(i), name, sel_text, f"{c.current_students}/{c.max_students}", key=str(i))
@@ -840,12 +840,12 @@ class CustomBuilderScreen(Screen):
         options = self.courses[subject_idx]
         if not options:
             return
-        other = [c for k, c in self.selections.items() if k != subject_idx]
-        current = self.selections.get(subject_idx)
+        other = [c for k, c in self.picks.items() if k != subject_idx]
+        current = self.picks.get(subject_idx)
 
         def _on_pick(picked: Optional[Course]) -> None:
             if picked is not None:
-                self.selections[subject_idx] = picked
+                self.picks[subject_idx] = picked
                 self._refresh_table()
 
         self.app.push_screen(
@@ -870,16 +870,16 @@ class CustomBuilderScreen(Screen):
         if row is None or row < 0:
             return
         subject_idx = self._row_to_subject_idx(row)
-        if subject_idx is not None and subject_idx in self.selections:
-            del self.selections[subject_idx]
+        if subject_idx is not None and subject_idx in self.picks:
+            del self.picks[subject_idx]
             self._refresh_table()
 
     def _save(self) -> None:
-        if not self.selections:
+        if not self.picks:
             self.notify("Chưa chọn lớp nào.", severity="warning")
             return
         name = self.query_one("#save-name", Input).value
-        filename = self.custom.save_named(list(self.selections.values()), name)
+        filename = self.custom.save_named(list(self.picks.values()), name)
         self.notify(f"Đã lưu: {filename}", severity="information")
         self.query_one("#save-name", Input).value = ""
 
