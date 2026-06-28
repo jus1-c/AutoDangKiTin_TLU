@@ -7,12 +7,16 @@ from src.core.client import TLUClient
 from src.models.user import User
 
 
-# Known fallback IDs (from old hardcoded logic — used as last resort)
+# Known fallback IDs (verified against live API — used as last resort)
 _FALLBACK_MAIN_ID = 66
-_FALLBACK_SUMMER_ID = 72
+_FALLBACK_SUMMER_ID = 78
 
-# Keywords that identify a summer semester in period name
-_SUMMER_NAME_KEYWORDS = ("hè", "he ", "phụ", "phu", "summer", "he,")
+# Keywords that identify a SUMMER semester specifically.
+# NOTE: "phụ" (supplementary) is INTENTIONALLY excluded — in TLU data,
+# "Học kỳ phụ" (supplementary, ID 72) is NOT the same as
+# "Học kỳ hè" (summer, ID 78). Including "phụ" would make the
+# detector pick supplementary as summer.
+_SUMMER_NAME_KEYWORDS = ("hè", "he ", "summer", "he,")
 
 # Months (1-12) that indicate a summer-semester startDate
 _SUMMER_MONTHS = (4, 5, 6, 7, 8)  # Apr–Aug
