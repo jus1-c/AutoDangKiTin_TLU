@@ -189,7 +189,6 @@ class LoginScreen(ModalScreen[Optional[User]]):
         self._default_save = default_save
 
     def compose(self) -> ComposeResult:
-        yield Header()
         with Container(id="login-container"):
             yield Label("ĐĂNG NHẬP", id="login-title")
             yield Label("Mã sinh viên:")
@@ -203,7 +202,6 @@ class LoginScreen(ModalScreen[Optional[User]]):
             with Horizontal(id="login-buttons"):
                 yield Button("Đăng nhập", id="login-btn", variant="primary")
                 yield Button("Thoát", id="cancel-btn", variant="default")
-        yield Footer()
 
     def on_mount(self) -> None:
         if not self._default_user:
@@ -802,9 +800,11 @@ class TLUApp(App):
         padding: 1 0 0 0;
     }
 
-    /* Login screen */
-    #login-container {
+    /* Login screen — centered on screen, no Header/Footer */
+    LoginScreen {
         align: center middle;
+    }
+    #login-container {
         padding: 1 2;
         width: 50;
         height: auto;
@@ -834,10 +834,10 @@ class TLUApp(App):
         padding-top: 1;
         height: auto;
         width: 100%;
-        align-horizontal: center;
     }
     #login-buttons Horizontal {
         height: auto;
+        align-horizontal: center;
     }
     #login-buttons Button {
         margin: 0 1;
