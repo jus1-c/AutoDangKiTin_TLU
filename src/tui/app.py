@@ -29,7 +29,6 @@ from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
-    Checkbox,
     DataTable,
     Footer,
     Header,
@@ -37,6 +36,7 @@ from textual.widgets import (
     Label,
     RichLog,
     Static,
+    Switch,
 )
 
 from src.config import Config
@@ -196,7 +196,9 @@ class LoginScreen(ModalScreen[Optional[User]]):
             yield Input(value=self._default_user, id="username", placeholder="Mã sinh viên")
             yield Label("Mật khẩu:")
             yield Input(password=True, id="password", placeholder="Mật khẩu")
-            yield Checkbox("Lưu đăng nhập cho lần sau", value=self._default_save, id="save-login")
+            with Horizontal(id="save-login-row"):
+                yield Switch(value=self._default_save, id="save-login")
+                yield Label("Lưu đăng nhập cho lần sau", id="save-login-label")
             yield Static("", id="login-error")
             with Horizontal(id="login-buttons"):
                 yield Button("Đăng nhập", id="login-btn", variant="primary")
@@ -223,7 +225,7 @@ class LoginScreen(ModalScreen[Optional[User]]):
     async def _attempt_login(self) -> None:
         u = self.query_one("#username", Input).value.strip()
         p = self.query_one("#password", Input).value
-        save = self.query_one("#save-login", Checkbox).value
+        save = self.query_one("#save-login", Switch).value
         err = self.query_one("#login-error", Static)
         if not u or not p:
             err.update("Thiếu tên đăng nhập hoặc mật khẩu.")
@@ -341,7 +343,9 @@ class RegisterScreen(Screen):
         with Container():
             yield Label("ĐĂNG KÝ NHANH", id="reg-title")
             with Horizontal():
-                yield Checkbox("Học kỳ hè", id="summer", value=False)
+                with Horizontal(id="summer-row"):
+                    yield Switch(value=False, id="summer")
+                    yield Label("Học kỳ hè")
                 yield Button("Tải danh sách môn", id="load", variant="primary")
                 yield Button("Đăng ký môn đã chọn", id="run", variant="success")
                 yield Button("Quay lại", id="back")
@@ -352,8 +356,8 @@ class RegisterScreen(Screen):
         table = self.query_one("#courses-table", DataTable)
         table.add_columns("STT", "Tên môn", "Mã", "Lớp đầu", "Sĩ số")
 
-    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        if event.checkbox.id == "summer":
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id == "summer":
             self.is_summer = event.value
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -445,7 +449,9 @@ class SniffScreen(Screen):
         with Container():
             yield Label("SNIFFING RIÊNG", id="sniff-title")
             with Horizontal():
-                yield Checkbox("Học kỳ hè", id="summer", value=False)
+                with Horizontal(id="summer-row"):
+                    yield Switch(value=False, id="summer")
+                    yield Label("Học kỳ hè")
                 yield Button("Tải danh sách môn", id="load", variant="primary")
                 yield Button("Săn môn đã chọn", id="run", variant="warning")
                 yield Button("Quay lại", id="back")
@@ -456,8 +462,8 @@ class SniffScreen(Screen):
         table = self.query_one("#courses-table", DataTable)
         table.add_columns("STT", "Tên môn", "Mã", "Lớp đầu", "Sĩ số")
 
-    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        if event.checkbox.id == "summer":
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        if event.switch.id == "summer":
             self.is_summer = event.value
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -711,7 +717,9 @@ class SettingsScreen(Screen):
         yield Header()
         with Container():
             yield Label("SETTINGS", id="set-title")
-            yield Checkbox("Chế độ Debug", value=Config.DEBUG, id="debug")
+            with Horizontal(id="debug-row"):
+                yield Switch(value=Config.DEBUG, id="debug")
+                yield Label("Chế độ Debug")
             with Horizontal():
                 yield Label("Interval sniff (giây):")
                 yield Input(
@@ -743,7 +751,7 @@ class SettingsScreen(Screen):
             self.app.exit()
 
     def _save(self) -> None:
-        dbg = self.query_one("#debug", Checkbox).value
+        dbg = self.query_one("#debug", Switch).value
         try:
             interval = float(self.query_one("#interval", Input).value.strip() or "2.0")
             if interval <= 0:
@@ -773,6 +781,33 @@ class TLUApp(App):
     #log-container { padding: 1 2; height: 100%; }
     #log-title { text-style: bold; padding-bottom: 1; }
     #log { height: 1fr; border: solid $primary; }
+
+    /* Switch (Catppuccin Macchiato tones) */
+    Switch {
+        height: 3;
+        width: 8;
+    }
+    Switch > .switch--slider {
+        background: $surface-lighten-1;
+        color: $text-muted;
+    }
+    Switch > .switch--slider.-on {
+        background: #a6da95;          /* Catppuccin Macchiato Green */
+        color: #24273a;              /* Catppuccin Macchiato Base */
+    }
+    Switch:focus > .switch--slider {
+        background: $surface-lighten-2;
+    }
+    Switch:focus > .switch--slider.-on {
+        background: #a6da95;
+    }
+    #save-login-row, #summer-row, #debug-row {
+        height: 3;
+        align-vertical: middle;
+    }
+    #save-login-label, #summer-row Label, #debug-row Label {
+        padding: 0 1;
+    }
     """
 
     def __init__(self):
