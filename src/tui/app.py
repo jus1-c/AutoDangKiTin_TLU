@@ -125,11 +125,11 @@ class ToggleSwitch(Static, can_focus=True):
 
     def render(self) -> RichText:
         if self.value:
-            # ON: ░█ (empty + full) — filled part on RIGHT
-            return RichText("░█", style="black on #a6da95")
+            # ON: green full blocks
+            return RichText("██", style="#a6da95")
         else:
-            # OFF: █░ (full + empty) — filled part on LEFT
-            return RichText("█░", style="black on #5b6078")
+            # OFF: gray full blocks
+            return RichText("██", style="#5b6078")
 
     def watch_value(self, value: bool) -> None:
         self.refresh()
