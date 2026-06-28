@@ -24,6 +24,7 @@ class Config:
     # App Settings
     CONCURRENCY_LIMIT = int(os.getenv("CONCURRENCY_LIMIT", 20))
     REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", 30))
+    SNIFF_INTERVAL = float(os.getenv("SNIFF_INTERVAL", 2.0))
     DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
     
     # Paths
