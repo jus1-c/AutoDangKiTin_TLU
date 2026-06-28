@@ -111,7 +111,11 @@ def register(
     all_subjects: bool = typer.Option(False, "--all", help="Đăng ký tất cả"),
     summer: bool = typer.Option(False, "--summer", help="Học kỳ hè"),
     profile: Optional[str] = typer.Option(None, "--profile", help="Chạy từ file custom profile"),
-    auto_sniff: bool = typer.Option(True, "--auto-sniff/--no-auto-sniff", help="Tự sniff môn fail"),
+    auto_sniff: bool = typer.Option(
+        Config.AUTO_SNIFF_FALLBACK,
+        "--auto-sniff/--no-auto-sniff",
+        help="Tự sniff môn fail (mặc định theo Settings)",
+    ),
     interval: float = typer.Option(Config.SNIFF_INTERVAL, "--sniff-interval", help="Interval sniff (giây)"),
 ):
     """Đăng ký môn theo chỉ số / tất cả / từ custom profile."""
@@ -260,7 +264,11 @@ def profile_list():
 @profile_app.command("run")
 def profile_run(
     name: str = typer.Argument(..., help="Tên file profile"),
-    auto_sniff: bool = typer.Option(True, "--auto-sniff/--no-auto-sniff"),
+    auto_sniff: bool = typer.Option(
+        Config.AUTO_SNIFF_FALLBACK,
+        "--auto-sniff/--no-auto-sniff",
+        help="Tự sniff môn fail (mặc định theo Settings)",
+    ),
     interval: float = typer.Option(Config.SNIFF_INTERVAL, "--sniff-interval"),
 ):
     """Chạy một custom profile (đăng ký + sniff nếu có fail)."""
