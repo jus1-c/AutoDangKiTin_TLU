@@ -1301,25 +1301,25 @@ class SettingsScreen(Screen):
         yield Header()
         with Container(id="settings-container"):
             yield Label("SETTINGS", id="set-title")
-            with Horizontal(id="settings-row"):
+            with Horizontal(id="row-auto-sniff", classes="settings-row"):
                 yield ToggleSwitch(value=Config.AUTO_SNIFF_FALLBACK, id="auto-sniff")
                 yield Label("Tự fallback sang sniffing khi đăng ký fail")
-            with Horizontal(id="settings-row"):
+            with Horizontal(id="row-debug", classes="settings-row"):
                 yield ToggleSwitch(value=Config.DEBUG, id="debug")
                 yield Label("Chế độ Debug")
-            with Horizontal(id="settings-row"):
+            with Horizontal(id="row-burst", classes="settings-row"):
                 yield Label("Số request song song / lần thử (BURST):")
                 yield Input(value=str(Config.BURST_COUNT), id="burst")
-            with Horizontal(id="settings-row"):
+            with Horizontal(id="row-concurrency", classes="settings-row"):
                 yield Label("Giới hạn đồng thời (CONCURRENCY):")
                 yield Input(value=str(Config.CONCURRENCY_LIMIT), id="concurrency")
-            with Horizontal(id="settings-row"):
+            with Horizontal(id="row-interval", classes="settings-row"):
                 yield Label("Interval sniff (giây):")
                 yield Input(value=str(Config.SNIFF_INTERVAL), id="interval")
-            with Horizontal(id="settings-row"):
+            with Horizontal(id="row-jitter", classes="settings-row"):
                 yield Label("Jitter sniff (giây, ±):")
                 yield Input(value=str(Config.SNIFF_JITTER), id="jitter")
-            with Horizontal(id="settings-row"):
+            with Horizontal(id="row-max-duration", classes="settings-row"):
                 yield Label("Giới hạn thời gian sniff (phút, 0 = vô hạn):")
                 yield Input(value=str(Config.SNIFF_MAX_DURATION_MIN), id="max_duration")
             with Horizontal(id="settings-buttons"):
@@ -1348,15 +1348,23 @@ class SettingsScreen(Screen):
                     pass
             self.app.exit()
 
-    def _parse_int(self, widget_id: str, label: str) -> Optional[int]:
+    def _parse_int(self, widget_id: str, label: str, allow_zero: bool = False) -> Optional[int]:
+        """Parse a positive int input. If allow_zero=True, 0 is also valid
+        (used for SNIFF_MAX_DURATION_MIN where 0 = infinite)."""
         raw = self.query_one(f"#{widget_id}", Input).value.strip()
         try:
             v = int(raw)
-            if v <= 0:
+            if v < 0 or (v == 0 and not allow_zero):
                 raise ValueError
             return v
         except ValueError:
-            self.notify(f"{label} phải là số nguyên dương.", severity="error")
+            if allow_zero:
+                self.notify(
+                    f"{label} phải là số nguyên >= 0 (0 = vô hạn).",
+                    severity="error",
+                )
+            else:
+                self.notify(f"{label} phải là số nguyên dương.", severity="error")
             return None
 
     def _parse_float(self, widget_id: str, label: str) -> Optional[float]:
@@ -1385,7 +1393,7 @@ class SettingsScreen(Screen):
         jitter = self._parse_float("jitter", "Jitter")
         if jitter is None:
             return
-        max_dur = self._parse_int("max_duration", "Max sniff duration")
+        max_dur = self._parse_int("max_duration", "Max sniff duration", allow_zero=True)
         if max_dur is None:
             return
 
@@ -1414,16 +1422,16 @@ class TLUApp(App):
     }
 
     /* Rows that contain a ToggleSwitch + Label */
-    #save-login-row, #summer-row, #debug-row, #settings-row {
+    #save-login-row, #summer-row, #debug-row, .settings-row {
         height: 3;
         align-vertical: middle;
         padding: 1 0 0 0;
     }
-    #settings-row Label {
+    .settings-row Label {
         width: auto;
         padding: 0 1 0 0;
     }
-    #settings-row Input {
+    .settings-row Input {
         width: 16;
     }
     #settings-buttons {
