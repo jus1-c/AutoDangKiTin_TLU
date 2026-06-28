@@ -520,6 +520,23 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
     def on_mount(self) -> None:
         self._render_options()
 
+    @staticmethod
+    def _detail(opt: "Course") -> str:
+        """One-line secondary detail: Thứ + tiết + GV + phòng + ngày."""
+        parts: List[str] = []
+        wd = opt.week_day
+        if wd:
+            parts.append(wd)
+        if opt.period_range:
+            parts.append(f"Tiết {opt.period_range}")
+        if opt.teacher_name:
+            parts.append(f"GV: {opt.teacher_name}")
+        if opt.room_name:
+            parts.append(f"P: {opt.room_name}")
+        if opt.date_range:
+            parts.append(opt.date_range)
+        return "  •  ".join(parts)
+
     def _render_options(self) -> None:
         host = self.query_one("#picker-list", Static)
         lines: List[RichText] = []
@@ -527,37 +544,37 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
             conflict = any(opt.conflicts_with(o) for o in self.other_selected)
             chosen = opt == self.current
             if conflict:
-                line = RichText(
+                head = RichText(
                     f"  ✗  {opt.display_name}  "
-                    f"[{opt.current_students}/{opt.max_students}]  "
-                    f"— TRÙNG LỊCH",
+                    f"[{opt.current_students}/{opt.max_students}]",
                     style="#5b6078 dim italic",
                 )
+                tail = RichText(self._detail(opt), style="#5b6078 dim italic")
+                tag = RichText("— TRÙNG LỊCH (không thể chọn)", style="#ed8796 dim italic")
+                lines.extend([head, tail, tag, RichText("")])
             elif chosen:
-                line = RichText(
+                head = RichText(
                     f"  ●  {opt.display_name}  "
-                    f"[{opt.current_students}/{opt.max_students}]  "
-                    f"— đang chọn",
+                    f"[{opt.current_students}/{opt.max_students}]  — đang chọn",
                     style="#a6da95 bold",
                 )
+                tail = RichText(self._detail(opt), style="#a6da95")
+                lines.extend([head, tail, RichText("")])
             else:
-                line = RichText(
+                head = RichText(
                     f"  ○  {opt.display_name}  "
-                    f"[{opt.current_students}/{opt.max_students}]  "
-                    f"— nhấn Enter để chọn",
+                    f"[{opt.current_students}/{opt.max_students}]  — nhấn Enter để chọn",
                     style="#cad3f5",
                 )
-            lines.append(line)
-            lines.append(RichText(""))
+                tail = RichText(self._detail(opt), style="#8087a2")
+                lines.extend([head, tail, RichText("")])
         host.update(RichText("\n").join(lines))
 
     def on_key(self, event) -> None:
         if event.key in ("up", "down", "j", "k", "enter"):
-            # Hand-off to selection logic
             self._handle_nav(event.key)
 
     def _handle_nav(self, key: str) -> None:
-        # Stateful index for the picker
         if not hasattr(self, "_idx"):
             self._idx = 0
         if key == "down" or key == "j":
@@ -572,35 +589,40 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
                 self.dismiss(opt)
 
     def _refresh_cursor(self) -> None:
-        # Re-render with the new cursor index
         host = self.query_one("#picker-list", Static)
         lines: List[RichText] = []
         for i, opt in enumerate(self.options):
             conflict = any(opt.conflicts_with(o) for o in self.other_selected)
             chosen = opt == self.current
             if conflict:
-                line = RichText(
+                head = RichText(
                     f"  ✗  {opt.display_name}  "
-                    f"[{opt.current_students}/{opt.max_students}]  "
-                    f"— TRÙNG LỊCH",
+                    f"[{opt.current_students}/{opt.max_students}]",
                     style="#5b6078 dim italic",
                 )
+                tail = RichText(self._detail(opt), style="#5b6078 dim italic")
+                tag = RichText("— TRÙNG LỊCH (không thể chọn)", style="#ed8796 dim italic")
+                lines.extend([head, tail, tag, RichText("")])
             elif chosen or i == self._idx:
-                style = "#f5a97f bold" if i == self._idx else "#a6da95 bold"
-                marker = "▸" if i == self._idx else "●"
-                line = RichText(
-                    f"  {marker}  {opt.display_name}  "
-                    f"[{opt.current_students}/{opt.max_students}]",
-                    style=style,
+                head_style = "#f5a97f bold" if i == self._idx else "#a6da95 bold"
+                head_marker = "▸" if i == self._idx else "●"
+                head_tail = " (đang chọn)" if chosen else ""
+                head = RichText(
+                    f"  {head_marker}  {opt.display_name}  "
+                    f"[{opt.current_students}/{opt.max_students}]{head_tail}",
+                    style=head_style,
                 )
+                tail_style = "#f5a97f" if i == self._idx else "#a6da95"
+                tail = RichText(self._detail(opt), style=tail_style)
+                lines.extend([head, tail, RichText("")])
             else:
-                line = RichText(
+                head = RichText(
                     f"  ○  {opt.display_name}  "
                     f"[{opt.current_students}/{opt.max_students}]",
                     style="#cad3f5",
                 )
-            lines.append(line)
-            lines.append(RichText(""))
+                tail = RichText(self._detail(opt), style="#8087a2")
+                lines.extend([head, tail, RichText("")])
         host.update(RichText("\n").join(lines))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -656,6 +678,12 @@ class CustomBuilderScreen(Screen):
     def _is_summer(self) -> bool:
         return self.query_one("#summer", ToggleSwitch).value
 
+    def on_data_table_row_activated(self, event) -> None:
+        """Enter or double-click on a row → open the class picker for that subject."""
+        if event.data_table.id == "builder-table":
+            self._cursor_row = event.cursor_row
+            asyncio.create_task(self._pick_class())
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
         if bid == "back":
@@ -692,6 +720,16 @@ class CustomBuilderScreen(Screen):
         except Exception as e:  # noqa: BLE001
             self.notify(f"Lỗi tải môn: {e}", severity="error")
 
+    @staticmethod
+    def _selected_cell_text(sel: Optional[Course]) -> str:
+        """Cell text for 'Lớp đã chọn'. Two-line: name + period/date detail."""
+        if not sel:
+            return "---"
+        detail = sel.picker_detail
+        if detail:
+            return f"{sel.display_name}\n  ↳ {detail}"
+        return sel.display_name
+
     def _refresh_table(self) -> None:
         table = self.query_one("#builder-table", DataTable)
         table.clear()
@@ -699,13 +737,17 @@ class CustomBuilderScreen(Screen):
             if not self.courses[i]:
                 continue
             sel = self.selections.get(i)
-            sel_text = sel.display_name if sel else "---"
+            sel_text = self._selected_cell_text(sel)
             c = self.courses[i][0]
             table.add_row(str(i), name, sel_text, f"{c.current_students}/{c.max_students}", key=str(i))
 
     async def _pick_class(self) -> None:
         table = self.query_one("#builder-table", DataTable)
-        row = table.cursor_row
+        # Prefer row from a row_activated event if set, else use cursor.
+        row = getattr(self, "_cursor_row", None)
+        if row is None or row < 0:
+            row = table.cursor_row
+        self._cursor_row = None
         if row is None or row < 0 or not self.courses:
             self.notify("Chưa tải môn hoặc chưa chọn subject.", severity="warning")
             return

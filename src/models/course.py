@@ -1,5 +1,15 @@
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+
+def _fmt_date(ts_ms: int) -> str:
+    """Format ms-timestamp as Vietnamese DD/MM/YYYY."""
+    try:
+        return datetime.fromtimestamp(ts_ms / 1000).strftime("%d/%m/%Y")
+    except (ValueError, TypeError, OSError):
+        return ""
+
 
 @dataclass
 class TimeBlock:
@@ -8,7 +18,9 @@ class TimeBlock:
     week_index: int       # Day of week (2=Mon, 8=Sun)
     start_period: int     # Start Period Index
     end_period: int       # End Period Index
-    
+    teacher_name: str = ""
+    room_name: str = ""
+
     def conflicts_with(self, other: 'TimeBlock') -> bool:
         # 1. Check Date Range Intersection (Phase check)
         # Conflict if intervals overlap: StartA <= EndB AND StartB <= EndA
@@ -22,8 +34,9 @@ class TimeBlock:
         # 3. Check Period Intersection
         if (self.start_period <= other.end_period and other.start_period <= self.end_period):
             return True
-            
+
         return False
+
 
 @dataclass
 class Course:
@@ -48,7 +61,7 @@ class Course:
     @property
     def max_students(self) -> int:
         return self.data.get("maxStudent", 0)
-    
+
     @property
     def time_blocks(self) -> List[TimeBlock]:
         """Parses timetables into comparable TimeBlocks."""
@@ -64,17 +77,96 @@ class Course:
                     end_date=tt['endDate'],
                     week_index=tt['weekIndex'],
                     start_period=tt['startHour']['indexNumber'],
-                    end_period=tt['endHour']['indexNumber']
+                    end_period=tt['endHour']['indexNumber'],
+                    teacher_name=str(tt.get('teacherName') or ""),
+                    room_name=str(tt.get('roomName') or ""),
                 ))
             except (KeyError, TypeError):
                 continue
         return blocks
-    
+
+    @property
+    def teacher_name(self) -> str:
+        """First non-empty teacher name across timetables, else top-level."""
+        for tb in self.time_blocks:
+            if tb.teacher_name:
+                return tb.teacher_name
+        return str(self.data.get("teacherName") or "")
+
+    @property
+    def room_name(self) -> str:
+        """First non-empty room name across timetables."""
+        for tb in self.time_blocks:
+            if tb.room_name:
+                return tb.room_name
+        return ""
+
+    @property
+    def period_range(self) -> str:
+        """Like '1 -> 3' (one block) or '1 -> 3, 2 -> 4' (multi distinct block).
+
+        Consecutive duplicate period strings are collapsed (TLU API often
+        returns the same class with 4 identical timetable entries).
+        """
+        seen: List[str] = []
+        for tb in self.time_blocks:
+            seg = (
+                str(tb.start_period)
+                if tb.start_period == tb.end_period
+                else f"{tb.start_period} -> {tb.end_period}"
+            )
+            if not seen or seen[-1] != seg:
+                seen.append(seg)
+        return ", ".join(seen)
+
+    @property
+    def date_range(self) -> str:
+        """Like '2/7/2026' (one date) or '2/7 -> 15/7/2026' (different dates).
+
+        Duplicate dates collapse to a single date, and the displayed range
+        is sorted by the underlying timestamp (not by API order).
+        """
+        blocks = self.time_blocks
+        if not blocks:
+            return ""
+        seen_ts: List[int] = []
+        for b in blocks:
+            if b.start_date not in seen_ts:
+                seen_ts.append(b.start_date)
+        seen_ts.sort()
+        unique_dates = [_fmt_date(ts) for ts in seen_ts]
+        unique_dates = [d for d in unique_dates if d]
+        if not unique_dates:
+            return ""
+        if len(unique_dates) == 1:
+            return unique_dates[0]
+        return f"{unique_dates[0]} -> {unique_dates[-1]}"
+
+    @property
+    def picker_detail(self) -> str:
+        """Short summary shown in CustomBuilderScreen after a class is picked.
+
+        Format: '1 -> 3, 2/7/2026' (or just whichever half is available).
+        """
+        p, d = self.period_range, self.date_range
+        if p and d:
+            return f"{p}, {d}"
+        return p or d
+
+    @property
+    def week_day(self) -> str:
+        """Day-of-week name for the first timetable block (e.g. 'Thứ 2')."""
+        wd = ["", "Chủ nhật", "Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
+        blocks = self.time_blocks
+        if blocks and 1 <= blocks[0].week_index <= 8:
+            return wd[blocks[0].week_index]
+        return ""
+
     def conflicts_with(self, other: 'Course') -> bool:
         """Checks if this course conflicts with another course."""
         my_blocks = self.time_blocks
         other_blocks = other.time_blocks
-        
+
         for mb in my_blocks:
             for ob in other_blocks:
                 if mb.conflicts_with(ob):
