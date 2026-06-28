@@ -767,18 +767,151 @@ class SettingsScreen(Screen):
 
 class TLUApp(App):
     CSS = """
-    Screen { background: $surface; }
-    #login-container, #menu-container { align: center middle; padding: 1 2; }
-    #login-title, #menu-greet { text-align: center; text-style: bold; padding: 1; }
-    #login-title { color: $accent; }
-    #menu-greet { color: $success; }
-    #menu-hint { text-align: center; color: $text-muted; padding-bottom: 1; }
-    Button { margin: 1 1; min-width: 30; }
-    #login-buttons, #log-buttons { padding-top: 1; }
-    #login-error { color: $error; padding: 1 0; }
-    #log-container { padding: 1 2; height: 100%; }
-    #log-title { text-style: bold; padding-bottom: 1; }
-    #log { height: 1fr; border: solid $primary; }
+    /* Catppuccin Macchiato palette */
+    Screen {
+        background: #24273a;
+    }
+
+    /* Switch — green ON, gray OFF */
+    Switch {
+        background: transparent;
+        border: none;
+        height: 1;
+        width: auto;
+        margin: 0 1 0 0;
+    }
+    Switch > .switch--slider {
+        background: #5b6078;
+        color: #cad3f5;
+    }
+    Switch.-on > .switch--slider {
+        background: #a6da95;
+        color: #24273a;
+    }
+    Switch:hover > .switch--slider {
+        background: #6e738d;
+    }
+    Switch.-on:hover > .switch--slider {
+        background: #b7e3a8;
+    }
+
+    /* Login + Settings rows that contain a Switch + Label */
+    #save-login-row, #summer-row, #debug-row {
+        height: 3;
+        align-vertical: middle;
+        padding: 1 0 0 0;
+    }
+
+    /* Login screen */
+    #login-container {
+        align: center middle;
+        padding: 1 2;
+        width: 50;
+        height: auto;
+        background: #1e2030;
+        border: round #5b6078;
+    }
+    #login-title {
+        text-align: center;
+        text-style: bold;
+        color: #c6a0f6;
+        padding: 0 0 1 0;
+        width: 100%;
+    }
+    .login-field-label {
+        padding: 1 0 0 0;
+        color: #a5adcb;
+    }
+    #login-container Input {
+        margin: 0;
+    }
+    #login-error {
+        color: #ed8796;
+        padding: 1 0 0 0;
+        text-align: center;
+    }
+    #login-buttons {
+        padding-top: 1;
+        height: auto;
+        width: 100%;
+        align-horizontal: center;
+    }
+    #login-buttons Horizontal {
+        height: auto;
+    }
+    #login-buttons Button {
+        margin: 0 1;
+    }
+
+    /* Menu */
+    #menu-container {
+        align: center middle;
+        padding: 1 2;
+    }
+    #menu-greet {
+        text-align: center;
+        text-style: bold;
+        color: #a6da95;
+        padding: 1;
+    }
+    #menu-hint {
+        text-align: center;
+        color: #a5adcb;
+        padding-bottom: 1;
+    }
+    #menu-container Button {
+        margin: 1 1;
+        min-width: 36;
+    }
+
+    /* Register / Sniff / Custom / Calendar screens */
+    Label {
+        color: #cad3f5;
+    }
+    DataTable {
+        height: 1fr;
+        margin: 1 0;
+    }
+    DataTable > .datatable--header {
+        background: #363a4f;
+        color: #c6a0f6;
+        text-style: bold;
+    }
+    DataTable > .datatable--cursor {
+        background: #5b6078;
+        color: #cad3f5;
+    }
+    DataTable > .datatable--hover {
+        background: #494d64;
+    }
+
+    /* Log screen */
+    #log-container {
+        padding: 1 2;
+        height: 100%;
+    }
+    #log-title {
+        text-style: bold;
+        color: #c6a0f6;
+        padding-bottom: 1;
+    }
+    #log {
+        height: 1fr;
+        border: round #5b6078;
+        background: #181926;
+    }
+    #log-buttons {
+        padding-top: 1;
+        align-horizontal: center;
+    }
+    #log-buttons Button {
+        margin: 0 1;
+    }
+
+    /* Buttons global */
+    Button {
+        margin: 0 1;
+    }
     """
 
     def __init__(self):
