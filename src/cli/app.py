@@ -79,9 +79,6 @@ async def _ensure_user(client: TLUClient):
 def login(
     username: Optional[str] = typer.Option(None, "--user", "-u", help="Mã sinh viên"),
     password: Optional[str] = typer.Option(None, "--password", "-p", help="Mật khẩu", hide_input=True),
-    save: bool = typer.Option(
-        True, "--save/--no-save", help="Lưu mật khẩu vào res/login.json để auto-login lần sau"
-    ),
 ):
     """Đăng nhập và lưu session."""
     Config.ensure_dirs()
@@ -94,11 +91,8 @@ def login(
                 username = typer.prompt("Mã sinh viên")
             if not password:
                 password = typer.prompt("Mật khẩu", hide_input=True)
-            user = await auth.login(username, password, save=save)
-            if save:
-                console.print(f"[green]OK[/green] Xin chào {user.full_name} ({user.student_id}) — đã lưu đăng nhập.")
-            else:
-                console.print(f"[green]OK[/green] Xin chào {user.full_name} ({user.student_id}) — KHÔNG lưu đăng nhập.")
+            user = await auth.login(username, password)
+            console.print(f"[green]OK[/green] Xin chào {user.full_name} ({user.student_id})")
         finally:
             await client.close()
 

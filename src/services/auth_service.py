@@ -9,24 +9,14 @@ class AuthService:
     def __init__(self, client: TLUClient):
         self.client = client
 
-    async def login(self, username, password, save: bool = True) -> User:
-        """Logs in and returns a User object with populated IDs.
-
-        If `save` is True, persists credentials to Config.LOGIN_FILE for
-        auto-login. If False, removes any existing saved credentials.
-        """
+    async def login(self, username, password) -> User:
+        """Logs in and returns a User object with populated IDs."""
         await self.client.login(username, password)
-
-        if save:
-            os.makedirs(os.path.dirname(Config.LOGIN_FILE) or ".", exist_ok=True)
-            with open(Config.LOGIN_FILE, 'w', encoding='utf-8') as f:
-                json.dump({"username": username, "password": password}, f)
-        elif os.path.exists(Config.LOGIN_FILE):
-            try:
-                os.remove(Config.LOGIN_FILE)
-            except OSError:
-                pass
-
+        
+        # Save credentials for auto-login
+        with open(Config.LOGIN_FILE, 'w') as f:
+            json.dump({"username": username, "password": password}, f)
+            
         return await self.fetch_user_data(username, password)
 
     async def load_saved_user(self) -> User:

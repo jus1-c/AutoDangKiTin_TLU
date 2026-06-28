@@ -25,10 +25,11 @@ from typing import Any, Awaitable, Callable, List, Optional
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Center
+from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
+    Checkbox,
     DataTable,
     Footer,
     Header,
@@ -36,7 +37,6 @@ from textual.widgets import (
     Label,
     RichLog,
     Static,
-    Switch,
 )
 
 from src.config import Config
@@ -183,36 +183,29 @@ class LoginScreen(ModalScreen[Optional[User]]):
         Binding("ctrl+c", "cancel", "Hủy", show=False),
     ]
 
-    def __init__(self, default_user: Optional[str] = None, default_save: bool = True):
+    def __init__(self, default_user: Optional[str] = None):
         super().__init__()
         self._default_user = default_user or ""
-        self._default_save = default_save
 
     def compose(self) -> ComposeResult:
+        yield Header()
         with Container(id="login-container"):
             yield Label("ĐĂNG NHẬP", id="login-title")
-            yield Label("Mã sinh viên:", classes="login-field-label")
+            yield Label("Mã sinh viên:")
             yield Input(value=self._default_user, id="username", placeholder="Mã sinh viên")
-            yield Label("Mật khẩu:", classes="login-field-label")
+            yield Label("Mật khẩu:")
             yield Input(password=True, id="password", placeholder="Mật khẩu")
-            with Horizontal(id="save-login-row"):
-                yield Switch(value=self._default_save, id="save-login")
-                yield Label("Lưu đăng nhập cho lần sau", id="save-login-label")
             yield Static("", id="login-error")
-            with Center(id="login-buttons"):
-                with Horizontal():
-                    yield Button("Đăng nhập", id="login-btn", variant="primary")
-                    yield Button("Thoát", id="cancel-btn", variant="default")
+            with Horizontal(id="login-buttons"):
+                yield Button("Đăng nhập", id="login-btn", variant="primary")
+                yield Button("Thoát", id="cancel-btn", variant="default")
+        yield Footer()
 
     def on_mount(self) -> None:
         if not self._default_user:
             self.query_one("#username", Input).focus()
         else:
             self.query_one("#password", Input).focus()
-
-    def on_switch_changed(self, event: Switch.Changed) -> None:
-        if event.switch.id == "save-login":
-            pass
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel-btn":
@@ -228,7 +221,6 @@ class LoginScreen(ModalScreen[Optional[User]]):
     async def _attempt_login(self) -> None:
         u = self.query_one("#username", Input).value.strip()
         p = self.query_one("#password", Input).value
-        save = self.query_one("#save-login", Switch).value
         err = self.query_one("#login-error", Static)
         if not u or not p:
             err.update("Thiếu tên đăng nhập hoặc mật khẩu.")
@@ -239,7 +231,7 @@ class LoginScreen(ModalScreen[Optional[User]]):
             client = TLUClient()
             auth = AuthService(client)
             try:
-                user = await auth.login(u, p, save=save)
+                user = await auth.login(u, p)
                 self.dismiss({"user": user, "client": client})
             except Exception as e:  # noqa: BLE001
                 err.update(f"Lỗi: {e}")
@@ -346,9 +338,7 @@ class RegisterScreen(Screen):
         with Container():
             yield Label("ĐĂNG KÝ NHANH", id="reg-title")
             with Horizontal():
-                with Horizontal(id="summer-row"):
-                    yield Switch(value=False, id="summer")
-                    yield Label("Học kỳ hè")
+                yield Checkbox("Học kỳ hè", id="summer", value=False)
                 yield Button("Tải danh sách môn", id="load", variant="primary")
                 yield Button("Đăng ký môn đã chọn", id="run", variant="success")
                 yield Button("Quay lại", id="back")
@@ -359,8 +349,8 @@ class RegisterScreen(Screen):
         table = self.query_one("#courses-table", DataTable)
         table.add_columns("STT", "Tên môn", "Mã", "Lớp đầu", "Sĩ số")
 
-    def on_switch_changed(self, event: Switch.Changed) -> None:
-        if event.switch.id == "summer":
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "summer":
             self.is_summer = event.value
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -452,9 +442,7 @@ class SniffScreen(Screen):
         with Container():
             yield Label("SNIFFING RIÊNG", id="sniff-title")
             with Horizontal():
-                with Horizontal(id="summer-row"):
-                    yield Switch(value=False, id="summer")
-                    yield Label("Học kỳ hè")
+                yield Checkbox("Học kỳ hè", id="summer", value=False)
                 yield Button("Tải danh sách môn", id="load", variant="primary")
                 yield Button("Săn môn đã chọn", id="run", variant="warning")
                 yield Button("Quay lại", id="back")
@@ -465,8 +453,8 @@ class SniffScreen(Screen):
         table = self.query_one("#courses-table", DataTable)
         table.add_columns("STT", "Tên môn", "Mã", "Lớp đầu", "Sĩ số")
 
-    def on_switch_changed(self, event: Switch.Changed) -> None:
-        if event.switch.id == "summer":
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "summer":
             self.is_summer = event.value
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -720,9 +708,7 @@ class SettingsScreen(Screen):
         yield Header()
         with Container():
             yield Label("SETTINGS", id="set-title")
-            with Horizontal(id="debug-row"):
-                yield Switch(value=Config.DEBUG, id="debug")
-                yield Label("Chế độ Debug")
+            yield Checkbox("Chế độ Debug", value=Config.DEBUG, id="debug")
             with Horizontal():
                 yield Label("Interval sniff (giây):")
                 yield Input(
@@ -754,7 +740,7 @@ class SettingsScreen(Screen):
             self.app.exit()
 
     def _save(self) -> None:
-        dbg = self.query_one("#debug", Switch).value
+        dbg = self.query_one("#debug", Checkbox).value
         try:
             interval = float(self.query_one("#interval", Input).value.strip() or "2.0")
             if interval <= 0:
@@ -778,82 +764,12 @@ class TLUApp(App):
     #login-title { color: $accent; }
     #menu-greet { color: $success; }
     #menu-hint { text-align: center; color: $text-muted; padding-bottom: 1; }
-    #menu-container Button { margin: 1 1; min-width: 30; }
+    Button { margin: 1 1; min-width: 30; }
     #login-buttons, #log-buttons { padding-top: 1; }
+    #login-error { color: $error; padding: 1 0; }
     #log-container { padding: 1 2; height: 100%; }
     #log-title { text-style: bold; padding-bottom: 1; }
     #log { height: 1fr; border: solid $primary; }
-
-    /* Switch (Catppuccin Macchiato tones) */
-    Switch {
-        background: transparent;
-        width: auto;
-        height: auto;
-    }
-    Switch > .switch--slider {
-        background: #5b6078;
-        color: #cad3f5;
-    }
-    Switch.-on > .switch--slider {
-        background: #a6da95;
-        color: #24273a;
-    }
-    Switch:hover > .switch--slider {
-        background: #6e738d;
-    }
-    Switch.-on:hover > .switch--slider {
-        background: #b7e3a8;
-    }
-
-    /* Login form layout (ModalScreen container) */
-    #login-container {
-        align: center middle;
-        padding: 1 2;
-        width: 50;
-        height: auto;
-        background: #24273a;
-        border: round #5b6078;
-    }
-    #login-title {
-        text-align: center;
-        text-style: bold;
-        color: #c6a0f6;
-        padding: 0 0 1 0;
-        width: 100%;
-    }
-    .login-field-label {
-        padding: 1 0 0 0;
-        color: #a5adcb;
-    }
-    #login-container Input {
-        margin: 0;
-    }
-    #save-login-row {
-        height: 3;
-        padding: 1 0 0 0;
-    }
-    #save-login-row Switch {
-        margin: 0 1 0 0;
-    }
-    #save-login-label {
-        padding: 0;
-    }
-    #login-error {
-        color: #ed8796;
-        padding: 1 0 0 0;
-        text-align: center;
-    }
-    #login-buttons {
-        padding-top: 1;
-        height: auto;
-        width: 100%;
-    }
-    #login-buttons Horizontal {
-        height: auto;
-    }
-    #login-buttons Button {
-        margin: 0 1;
-    }
     """
 
     def __init__(self):
@@ -868,17 +784,12 @@ class TLUApp(App):
 
     def _do_login(self) -> None:
         default_user = None
-        default_save = True
         if os.path.exists(Config.LOGIN_FILE):
             try:
                 with open(Config.LOGIN_FILE, "r", encoding="utf-8") as f:
                     default_user = json.load(f).get("username")
-                default_save = True
             except Exception:
                 default_user = None
-                default_save = True
-        else:
-            default_save = False
 
         def _on_login(result) -> None:
             if not result:
@@ -896,7 +807,7 @@ class TLUApp(App):
             }
             self.push_screen(MenuScreen(user, self.services))
 
-        self.push_screen(LoginScreen(default_user, default_save), _on_login)
+        self.push_screen(LoginScreen(default_user), _on_login)
 
 
 def run_tui() -> None:
