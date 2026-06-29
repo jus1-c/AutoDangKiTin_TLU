@@ -31,7 +31,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal
+from textual.containers import Container, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
@@ -372,15 +372,17 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
                 id="password",
                 placeholder="Mật khẩu",
             )
-            with Horizontal(id="save-login-row"):
-                yield ToggleSwitch(value=self._default_save, id="save-login")
-                yield Label("Lưu đăng nhập cho lần sau")
-            with Horizontal(id="offline-mode-row"):
-                yield ToggleSwitch(value=False, id="offline-mode")
-                yield Label("Chế độ offline (dùng dữ liệu đã lưu)")
-            with Horizontal(id="continuous-login-row"):
-                yield ToggleSwitch(value=False, id="continuous-login")
-                yield Label("Bắn request login liên tục đến khi có token")
+            yield Label("Tùy chọn:", id="login-options-title")
+            with Vertical(id="login-options"):
+                with Horizontal(id="save-login-row", classes="opt-row"):
+                    yield ToggleSwitch(value=self._default_save, id="save-login")
+                    yield Label("Lưu đăng nhập")
+                with Horizontal(id="offline-mode-row", classes="opt-row"):
+                    yield ToggleSwitch(value=False, id="offline-mode")
+                    yield Label("Offline (dùng cache)")
+                with Horizontal(id="continuous-login-row", classes="opt-row"):
+                    yield ToggleSwitch(value=False, id="continuous-login")
+                    yield Label("Bắn login liên tục đến khi có token")
             yield Static("", id="login-error")
             with Horizontal(id="login-buttons"):
                 yield Button("Đăng nhập", id="login-btn", variant="primary")
@@ -1915,6 +1917,19 @@ class TLUApp(App):
         height: auto;
         background: #1e2030;
         border: round #5b6078;
+    }
+    #login-options-title {
+        margin-top: 1;
+        color: #a6adc8;
+        text-style: bold;
+    }
+    #login-options {
+        height: auto;
+        margin-bottom: 1;
+    }
+    .opt-row {
+        height: 1;
+        margin: 0;
     }
     #login-title {
         text-align: center;
