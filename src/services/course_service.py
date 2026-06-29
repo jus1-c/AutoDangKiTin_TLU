@@ -101,6 +101,16 @@ class CourseService:
                     pid = p.get("id")
                     if not pid or pid == original_id:
                         continue
+                    # Bug trước đây: không skip semester loại khác → khi
+                    # fetch HK hè fail, fallback loop thử main semester
+                    # (66) → nó trả data → set semester_summer_id = 66
+                    # → load NHẦM data HK chính vào all_course_summer.json
+                    # + URL dùng cho register cũng sai. Fix: skip period
+                    # thuộc loại semester đối diện.
+                    if is_summer and pid == user.semester_id:
+                        continue
+                    if not is_summer and pid == user.semester_summer_id:
+                        continue
                     if is_summer:
                         user.semester_summer_id = pid
                     else:
