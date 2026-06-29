@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 from src.core.client import TLUClient
 from src.models.user import User
 from src.models.course import Course
