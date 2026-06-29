@@ -638,7 +638,7 @@ class RegisterScreen(Screen):
                 ctx.log(f"[ERROR] {e}")
 
         _push_register_flow(
-            self.app, self.user, self.services, self._is_summer(),
+            self.app, self, self.user, self.services, self._is_summer(),
             log_title="Đăng ký nhanh", status_rows=status_rows,
             work_factory=_work,
         )
@@ -1237,7 +1237,7 @@ class ProfileScreen(Screen):
                 ctx.log(f"[ERROR] {e}")
 
         _push_register_flow(
-            self.app, self.user, self.services, is_summer,
+            self.app, self, self.user, self.services, is_summer,
             log_title=log_screen_title, status_rows=status_rows,
             work_factory=_work,
         )
@@ -1248,22 +1248,32 @@ class ProfileScreen(Screen):
 
 def _push_register_flow(
     app,
-    user: User,
-    services: dict,
-    is_summer: bool,
-    log_title: str,
-    status_rows: List[Dict[str, Any]],
-    work_factory: Callable[[LogCaptureContext, "TLUApp"], Awaitable[Any]],
+    source_screen: Optional[Screen] = None,
+    user: Optional[User] = None,
+    services: Optional[dict] = None,
+    is_summer: bool = False,
+    log_title: str = "Logs",
+    status_rows: Optional[List[Dict[str, Any]]] = None,
+    work_factory: Optional[Callable[[LogCaptureContext, "TLUApp"], Awaitable[Any]]] = None,
 ) -> None:
     """Push đăng kí flow: nếu SCHEDULE_ENABLED + còn thời gian, hiện
     CountdownScreen trước rồi mới push LogScreen. Ngược lại, push
     LogScreen thẳng.
+
+    `source_screen` dùng để check user còn ở flow đăng kí không (chưa
+    pop về menu). Nếu user đã navigate away, KHÔNG push LogScreen.
 
     Chạy toàn bộ flow trong một worker (cần thiết cho push_screen_wait).
     `work_factory(ctx)` là coroutine sẽ chạy trong worker của LogScreen.
     """
     async def _worker():
         def _go_log():
+            # Không push LogScreen nếu user đã navigate away khỏi flow
+            # đăng kí (đã pop source_screen). Nếu cứ push, LogScreen sẽ
+            # hiện đè lên menu hoặc các màn khác → UX lộn xộn.
+            if source_screen is not None and source_screen not in app.screen_stack:
+                print(f"[INFO] User navigated away, skip pushing LogScreen")
+                return None
             # Push LogScreen (không await push_screen_wait — sẽ treo
             # vĩnh viễn vì LogScreen chỉ dismiss khi user click 'Quay
             # lại' hoặc khi worker kết thúc, mà worker chưa chạy).
@@ -1272,7 +1282,7 @@ def _push_register_flow(
             # condition: query_one trong worker sẽ không fail nữa.
             log_screen = LogScreen(
                 log_title,
-                status_rows=status_rows,
+                status_rows=status_rows or [],
                 on_mount_start=lambda: log_screen.run_async(work_factory),
             )
             app.push_screen(log_screen)
@@ -1320,7 +1330,9 @@ def _push_register_flow(
             title=log_title,
         )
         app.push_screen(cd)
-        # Chờ CountdownScreen dismiss (tự động khi tới giờ hoặc user hủy).
+        # Chờ CountdownScreen dismiss (timer fire / user hủy / parent pop).
+        # dismissed event được set trong _dismiss_with HOẶC on_unmount
+        # → không bao giờ treo vĩnh viễn.
         await cd.dismissed.wait()
         # Nếu tới giờ → push LogScreen. Nếu user hủy → về menu.
         if fired[0]:
@@ -1385,6 +1397,12 @@ class CountdownScreen(ModalScreen):
     def on_unmount(self) -> None:
         if self._timer_handle is not None:
             self._timer_handle.stop()
+        # Đảm bảo worker không hang: nếu screen bị dismiss bởi parent
+        # (user pop Register khi countdown đang chạy) thì custom event
+        # dismissed cũng phải set. _dismiss_with chỉ set khi user click
+        # Hủy hoặc timer fire; nếu parent pop thì Textual dismiss
+        # screen mà không gọi _dismiss_with → worker sẽ chờ vĩnh viễn.
+        self.dismissed.set()
 
     def _now_ms(self) -> int:
         return int(_time_now() * 1000)
