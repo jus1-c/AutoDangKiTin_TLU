@@ -17,15 +17,14 @@ class RegisterService:
         self._semaphore_limit = Config.CONCURRENCY_LIMIT
         self.semaphore = asyncio.Semaphore(self._semaphore_limit)
 
-    async def register_subjects(self, user: User, subject_indices: List[int], all_courses: List[List[Course]], is_summer: bool = False, on_progress: Optional[LogFn] = None) -> List[Course]:
+    async def register_subjects(self, user: User, subject_indices: List[int], all_courses: List[List[Course]], is_summer: bool = False, on_progress: Optional[LogFn] = None, on_start: Optional[LogFn] = None) -> List[Course]:
         """
         Registers for multiple subjects. Returns list of failed courses.
 
         `on_progress(idx, success, course)` is called after each subject
-        completes (success or failure) so the UI can update per-row status
-        in real time. The registration tasks themselves still run
-        concurrently — we just await them in submission order to report
-        progress sequentially.
+        completes (success or failure).
+        `on_start(idx, course)` is called BEFORE the burst for each
+        subject so the UI can show a 'sending' state.
         """
         url = user.register_url(user.semester_summer_id if is_summer else user.semester_id)
 
@@ -47,10 +46,14 @@ class RegisterService:
             return []
 
         print("Đang gửi yêu cầu đăng ký...")
-        # Await each in submission order so on_progress fires per-subject.
-        # Tasks themselves still run concurrently via asyncio.create_task
-        # inside register_single_subject (they share the semaphore).
         for (idx, first_course), task in zip(subject_info, tasks):
+            # Báo "đang gửi" trước khi burst để UI thấy tiến trình (tránh
+            # treo ở "Chờ" quá lâu nếu server chậm).
+            if on_start is not None and first_course is not None:
+                try:
+                    on_start(idx, first_course)
+                except Exception:
+                    pass
             success = await task
             if on_progress is not None:
                 try:
@@ -75,10 +78,13 @@ class RegisterService:
     async def register_custom_for_semester(
         self, user: User, courses: List[Course], semester_id: int,
         on_progress: Optional[LogFn] = None,
+        on_start: Optional[LogFn] = None,
     ) -> List[Course]:
         """Registers a specific list of courses into a given semester.
 
         `on_progress(course, success)` is called after each course finishes.
+        `on_start(course)` is called BEFORE the burst so the UI can
+        show a 'sending' state.
         """
         url = user.register_url(semester_id)
         print(f"[SNIFF] register_custom → {url}")
@@ -88,8 +94,12 @@ class RegisterService:
         for course in courses:
              tasks.append(self.register_single_subject(url, [course], failed_courses))
 
-        # Await in submission order for per-course progress reporting.
         for course, task in zip(courses, tasks):
+            if on_start is not None:
+                try:
+                    on_start(course)
+                except Exception:
+                    pass
             success = await task
             if on_progress is not None:
                 try:
@@ -128,19 +138,71 @@ class RegisterService:
         return any(results)
 
     async def _send_register_request(self, url: str, data: dict) -> bool:
+        """Một request POST. Retry tối đa Config.BURST_MAX_ATTEMPTS lần
+        khi server trả response không parse được / 5xx / timeout. BỎ QUA
+        (return False) ngay với 4xx client errors (401/403/...) vì
+        retry vô ích — token hết hạn hoặc bị block.
+        """
+        max_attempts = max(1, int(getattr(Config, "BURST_MAX_ATTEMPTS", 3)))
+        timeout = float(getattr(Config, "BURST_REQUEST_TIMEOUT", 10.0))
+        attempt = 0
         async with self._get_semaphore():
-            while True:
+            while attempt < max_attempts:
+                attempt += 1
                 try:
-                    response = await self.client.request("POST", url, json=data)
-                    try:
-                        res_json = response.json()
-                        return res_json.get('status') == 0
-                    except:
-                        continue
-                except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadTimeout, httpx.WriteTimeout):
+                    response = await self.client.request(
+                        "POST", url, json=data, timeout=timeout
+                    )
+                except (httpx.ConnectError, httpx.TimeoutException,
+                        httpx.ReadTimeout, httpx.WriteTimeout,
+                        httpx.ConnectTimeout) as e:
+                    print(f"[BURST] attempt {attempt}/{max_attempts}: timeout/network error: "
+                          f"{type(e).__name__}: {e}")
                     continue
-                except Exception:
+                except Exception as e:
+                    print(f"[BURST] attempt {attempt}/{max_attempts}: "
+                          f"{type(e).__name__}: {e}")
                     continue
+
+                status = getattr(response, "status_code", "?")
+                if status in (401, 403):
+                    # Client error — token hết hạn hoặc bị block. Không retry.
+                    body = (getattr(response, "text", "") or "")[:200]
+                    print(f"[BURST] HTTP {status} — bỎ QUA, không retry. "
+                          f"Body[:200]: {body!r}")
+                    return False
+                if status >= 500:
+                    body = (getattr(response, "text", "") or "")[:200]
+                    print(f"[BURST] attempt {attempt}/{max_attempts}: HTTP {status} "
+                          f"(server error). Body[:200]: {body!r}")
+                    continue
+                # 2xx (or 3xx/4xx-other) — parse JSON
+                try:
+                    res_json = response.json()
+                except Exception as e:
+                    body = (getattr(response, "text", "") or "")[:200]
+                    print(f"[BURST] attempt {attempt}/{max_attempts}: "
+                          f"response không phải JSON: {e}. Body[:200]: {body!r}")
+                    continue
+                # status field trong JSON
+                json_status = res_json.get("status")
+                if json_status == 0:
+                    return True
+                # Có status nhưng != 0 (vd 401, 403, 429 trong JSON)
+                if json_status in (401, 403):
+                    print(f"[BURST] HTTP {status} + JSON status={json_status} — bỎ QUA.")
+                    return False
+                if json_status in (429,):
+                    print(f"[BURST] attempt {attempt}/{max_attempts}: rate limited (429)")
+                    continue
+                # status != 0, lý do khác → fail, không retry
+                msg = res_json.get("message") or res_json.get("error") or ""
+                print(f"[BURST] attempt {attempt}/{max_attempts}: server từ chối "
+                      f"(status={json_status}, msg={msg[:100]!r}). BỎ QUA, không retry.")
+                return False
+            # Hết attempt mà vẫn fail
+            print(f"[BURST] ĐÃ HẾT {max_attempts} attempt, bỎ QUA.")
+            return False
 
     async def _find_course_info(self, data: dict, target_code: str) -> Optional[dict]:
         """

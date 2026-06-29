@@ -29,6 +29,12 @@ class Config:
     SNIFF_JITTER = float(os.getenv("SNIFF_JITTER", 0.5))
     SNIFF_MAX_DURATION_MIN = int(os.getenv("SNIFF_MAX_DURATION_MIN", 60))  # 0 = infinite
     BURST_COUNT = int(os.getenv("BURST_COUNT", 5))
+    # Số lần retry tối đa khi server trả response lỗi (HTML/4xx/5xx).
+    # Trước đây vô hạn → worker treo ở trạng thái "Chờ" rất lâu.
+    BURST_MAX_ATTEMPTS = int(os.getenv("BURST_MAX_ATTEMPTS", 3))
+    # Timeout riêng cho register request (giây). Ngắn hơn timeout
+    # chung để tránh treo quá lâu.
+    BURST_REQUEST_TIMEOUT = float(os.getenv("BURST_REQUEST_TIMEOUT", 10.0))
     AUTO_SNIFF_FALLBACK = os.getenv("AUTO_SNIFF_FALLBACK", "True").lower() in ("true", "1", "yes")
     DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
     # Schedule: khi bật, các nút "Đăng ký" sẽ qua màn hình đếm ngược
@@ -43,6 +49,8 @@ class Config:
         "SNIFF_JITTER",
         "SNIFF_MAX_DURATION_MIN",
         "BURST_COUNT",
+        "BURST_MAX_ATTEMPTS",
+        "BURST_REQUEST_TIMEOUT",
         "AUTO_SNIFF_FALLBACK",
         "SCHEDULE_ENABLED",
         "SCHEDULE_LEAD_SECONDS",

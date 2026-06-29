@@ -577,6 +577,11 @@ class RegisterScreen(Screen):
             register: RegisterService = self.services["register"]
             is_summer = self._is_summer()
 
+            def on_start(idx: int, course) -> None:
+                key = f"subj_{idx}"
+                ctx.update_status(key, STATUS_SENDING,
+                                  f"Đang gửi {course.code if course else '?'}...")
+
             def on_progress(idx: int, success: bool, course) -> None:
                 key = f"subj_{idx}"
                 if success:
@@ -588,7 +593,7 @@ class RegisterScreen(Screen):
             try:
                 failed = await register.register_subjects(
                     self.user, indices, self.courses, is_summer,
-                    on_progress=on_progress,
+                    on_start=on_start, on_progress=on_progress,
                 )
                 if failed and Config.AUTO_SNIFF_FALLBACK and not ctx.should_stop():
                     ctx.log(f"[AUTO] {len(failed)} môn fail -> chuyển sang sniffing.")
@@ -1175,6 +1180,10 @@ class ProfileScreen(Screen):
         async def _work(ctx: LogCaptureContext):
             register: RegisterService = self.services["register"]
 
+            def on_start(course) -> None:
+                key = f"course_{id(course)}"
+                ctx.update_status(key, STATUS_SENDING, f"Đang gửi {course.code}...")
+
             def on_progress(course, success: bool) -> None:
                 key = f"course_{id(course)}"
                 if success:
@@ -1185,7 +1194,7 @@ class ProfileScreen(Screen):
             try:
                 failed = await register.register_custom_for_semester(
                     self.user, target_courses, semester_id=active_sem_id,
-                    on_progress=on_progress,
+                    on_start=on_start, on_progress=on_progress,
                 )
                 if failed and Config.AUTO_SNIFF_FALLBACK and not ctx.should_stop():
                     ctx.log(f"[AUTO] {len(failed)} môn fail -> chuyển sang sniffing.")
