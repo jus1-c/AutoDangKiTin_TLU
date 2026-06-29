@@ -371,6 +371,9 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
             with Horizontal(id="save-login-row"):
                 yield ToggleSwitch(value=self._default_save, id="save-login")
                 yield Label("Lưu đăng nhập cho lần sau")
+            with Horizontal(id="offline-mode-row"):
+                yield ToggleSwitch(value=False, id="offline-mode")
+                yield Label("Chế độ offline (dùng dữ liệu đã lưu)")
             yield Static("", id="login-error")
             with Horizontal(id="login-buttons"):
                 yield Button("Đăng nhập", id="login-btn", variant="primary")
@@ -394,28 +397,74 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
             await self._attempt_login()
 
     async def _attempt_login(self) -> None:
+        offline = self.query_one("#offline-mode", ToggleSwitch).value
+        err = self.query_one("#login-error", Static)
+        self.query_one("#login-btn", Button).disabled = True
+        try:
+            if offline:
+                await self._attempt_offline_login()
+            else:
+                await self._attempt_online_login()
+        except Exception as e:  # noqa: BLE001
+            err.update(f"Lỗi: {e}")
+            self.query_one("#login-btn", Button).disabled = False
+
+    async def _attempt_offline_login(self) -> None:
+        """Đăng nhập offline: 0 API call, dựng User từ res/user_info.json."""
+        err = self.query_one("#login-error", Static)
+        err.update("Đang tải dữ liệu offline...")
+        client = TLUClient()
+        try:
+            auth = AuthService(client)
+            user = await auth.load_offline_user()
+            self.dismiss({"user": user, "client": client, "offline": True})
+        except Exception as e:  # noqa: BLE001
+            err.update(f"Offline lỗi: {e}")
+            try:
+                await client.close()
+            except Exception:
+                pass
+            self.query_one("#login-btn", Button).disabled = False
+
+    async def _attempt_online_login(self) -> None:
+        """Đăng nhập online. Nếu mạng lỗi + có cache user_info.json →
+        tự động fallback sang offline (TUI tự động theo đã chốt)."""
         u = self.query_one("#username", Input).value.strip()
         p = self.query_one("#password", Input).value
         save = self.query_one("#save-login", ToggleSwitch).value
         err = self.query_one("#login-error", Static)
         if not u or not p:
             err.update("Thiếu tên đăng nhập hoặc mật khẩu.")
+            self.query_one("#login-btn", Button).disabled = False
             return
         err.update("Đang đăng nhập...")
-        self.query_one("#login-btn", Button).disabled = True
+        client = TLUClient()
         try:
-            client = TLUClient()
             auth = AuthService(client)
             try:
                 user = await auth.login(u, p, save=save)
-                self.dismiss({"user": user, "client": client})
+                self.dismiss({"user": user, "client": client, "offline": False})
             except Exception as e:  # noqa: BLE001
-                err.update(f"Lỗi: {e}")
-                self.query_one("#login-btn", Button).disabled = False
+                # Auto-fallback: lỗi mạng + có user_info.json → vào offline
+                if AuthService._is_network_error(e) and os.path.exists(
+                    Config.USER_INFO_FILE
+                ):
+                    err.update("Mất mạng — đang chuyển sang chế độ offline...")
+                    try:
+                        user = await auth.load_offline_user()
+                        self.dismiss(
+                            {"user": user, "client": client, "offline": True}
+                        )
+                        return
+                    except Exception as off_e:  # noqa: BLE001
+                        err.update(f"Offline fallback lỗi: {off_e}")
+                else:
+                    err.update(f"Lỗi: {e}")
                 try:
                     await client.close()
                 except Exception:
                     pass
+                self.query_one("#login-btn", Button).disabled = False
         except Exception as e:  # noqa: BLE001
             err.update(f"Lỗi: {e}")
             self.query_one("#login-btn", Button).disabled = False
@@ -433,14 +482,37 @@ class MenuScreen(Screen):
         Binding("5", "settings", "Settings"),
     ]
 
-    def __init__(self, user: User, services: dict):
+    def __init__(self, user: User, services: dict, offline: bool = False):
         super().__init__()
         self.user = user
         self.services = services
+        self.offline = offline
+
+    def _cache_age_text(self) -> str:
+        """Hiển thị tuổi cache (mtime của all_course.json) — dùng cho banner offline."""
+        path = os.path.join(Config.RES_DIR, "all_course.json")
+        if not os.path.exists(path):
+            return "(chưa có cache)"
+        import time
+        age_s = time.time() - os.path.getmtime(path)
+        if age_s < 60:
+            return "vừa tải"
+        if age_s < 3600:
+            return f"cache {int(age_s // 60)} phút trước"
+        if age_s < 86400:
+            return f"cache {int(age_s // 3600)} giờ trước"
+        return f"cache {int(age_s // 86400)} ngày trước"
 
     def compose(self) -> ComposeResult:
+        if self.offline:
+            self.app.title = "AutoDangKiTin TLU [OFFLINE]"
         yield Header()
         with Container(id="menu-container"):
+            if self.offline:
+                yield Label(
+                    f"--- CHẾ ĐỘ OFFLINE ({self._cache_age_text()}) ---",
+                    id="offline-banner",
+                )
             yield Label(
                 f"Xin chào {self.user.full_name} ({self.user.student_id})",
                 id="menu-greet",
@@ -449,12 +521,19 @@ class MenuScreen(Screen):
             yield Button("1. Đăng ký nhanh (chọn nhiều môn)", id="b1", variant="primary")
             yield Button("2. Tạo danh sách custom", id="b2", variant="warning")
             yield Button("3. Đăng ký theo profile", id="b3")
-            yield Button("4. Lịch (ICS / Google)", id="b4")
+            yield Button("4. Lịch (ICS / Google)", id="b4", disabled=self.offline)
             yield Button("5. Settings", id="b5")
             with Horizontal(id="menu-footer"):
                 yield Button("Thoát", id="exit-btn", variant="default")
                 yield Button("Đăng xuất", id="logout-btn", variant="error")
         yield Footer()
+
+    def _notify_need_network(self) -> None:
+        self.app.notify(
+            "Chức năng này cần kết nối mạng. Đăng xuất và đăng nhập lại online.",
+            severity="warning",
+            timeout=6,
+        )
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
@@ -465,13 +544,21 @@ class MenuScreen(Screen):
         elif bid == "b3":
             self.app.push_screen(ProfileScreen(self.user, self.services))
         elif bid == "b4":
-            self.app.push_screen(CalendarScreen(self.user, self.services))
+            if self.offline:
+                self._notify_need_network()
+            else:
+                self.app.push_screen(CalendarScreen(self.user, self.services))
         elif bid == "b5":
             self.app.push_screen(SettingsScreen(self.services))
         elif bid == "exit-btn":
             self.app.exit()
         elif bid == "logout-btn":
-            for f in (Config.TOKEN_FILE, Config.LOGIN_FILE, Config.GOOGLE_TOKEN_FILE):
+            for f in (
+                Config.TOKEN_FILE,
+                Config.LOGIN_FILE,
+                Config.GOOGLE_TOKEN_FILE,
+                Config.USER_INFO_FILE,
+            ):
                 try:
                     if os.path.exists(f):
                         os.remove(f)
@@ -489,7 +576,10 @@ class MenuScreen(Screen):
         self.app.push_screen(ProfileScreen(self.user, self.services))
 
     def action_calendar(self) -> None:
-        self.app.push_screen(CalendarScreen(self.user, self.services))
+        if self.offline:
+            self._notify_need_network()
+        else:
+            self.app.push_screen(CalendarScreen(self.user, self.services))
 
     def action_settings(self) -> None:
         self.app.push_screen(SettingsScreen(self.services))
@@ -1954,6 +2044,7 @@ class TLUApp(App):
                 return
             self.client = result["client"]
             user: User = result["user"]
+            offline: bool = result.get("offline", False)
             self.services = {
                 "client": self.client,
                 "auth": AuthService(self.client),
@@ -1962,7 +2053,7 @@ class TLUApp(App):
                 "calendar": CalendarService(self.client),
                 "custom": CustomService(),
             }
-            self.push_screen(MenuScreen(user, self.services))
+            self.push_screen(MenuScreen(user, self.services, offline=offline))
 
         self.push_screen(
             LoginScreen(default_user, default_save, default_password),
