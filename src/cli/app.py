@@ -46,24 +46,58 @@ profile_app = typer.Typer(help="Quản lý hồ sơ custom (res/custom/*.json)."
 app.add_typer(profile_app, name="profile")
 
 
-async def _ensure_user(client: TLUClient):
-    """Returns (User, services). Loads saved session or prompts login."""
+async def _ensure_user(client: TLUClient, offline: bool = False):
+    """Returns (User, services, offline_flag).
+
+    offline=True → gọi AuthService.load_offline_user() (0 API call).
+    offline=False → load session bình thường. Nếu lỗi mạng + có
+    cache user_info.json → prompt [Y/n] dùng offline.
+    """
     auth = AuthService(client)
-    try:
-        user = await auth.load_saved_user()
-        console.print(f"[green]Đã đăng nhập:[/green] {user.full_name}")
-    except Exception:
-        if not os.path.exists(Config.LOGIN_FILE):
-            console.print("[red]Chưa đăng nhập. Chạy:[/red] autodktin login")
-            raise typer.Exit(1)
-        console.print("[yellow]Phiên hết hạn. Đăng nhập lại...[/yellow]")
-        with open(Config.LOGIN_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+    used_offline = False
+
+    if offline:
         try:
-            user = await auth.login(data["username"], data["password"])
+            user = await auth.load_offline_user()
+            used_offline = True
+            console.print(f"[yellow]OFFLINE:[/yellow] Xin chào {user.full_name} ({user.student_id})")
         except Exception as e:
-            console.print(f"[red]Login thất bại: {e}[/red]")
+            console.print(f"[red]Offline load lỗi: {e}[/red]")
             raise typer.Exit(1)
+    else:
+        try:
+            user = await auth.load_saved_user()
+            console.print(f"[green]Đã đăng nhập:[/green] {user.full_name}")
+        except Exception as e:
+            # Auto-prompt offline nếu lỗi mạng + có cache
+            if AuthService._is_network_error(e) and os.path.exists(
+                Config.USER_INFO_FILE
+            ):
+                if typer.confirm("Mất mạng. Dùng offline mode với dữ liệu đã lưu?", default=True):
+                    try:
+                        user = await auth.load_offline_user()
+                        used_offline = True
+                        console.print(
+                            f"[yellow]OFFLINE:[/yellow] Xin chào {user.full_name} ({user.student_id})"
+                        )
+                    except Exception as off_e:
+                        console.print(f"[red]Offline fallback lỗi: {off_e}[/red]")
+                        raise typer.Exit(1)
+                else:
+                    raise typer.Exit(1)
+            else:
+                if not os.path.exists(Config.LOGIN_FILE):
+                    console.print("[red]Chưa đăng nhập. Chạy:[/red] autodktin login")
+                    raise typer.Exit(1)
+                console.print("[yellow]Phiên hết hạn. Đăng nhập lại...[/yellow]")
+                with open(Config.LOGIN_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                try:
+                    user = await auth.login(data["username"], data["password"])
+                except Exception as login_e:
+                    console.print(f"[red]Login thất bại: {login_e}[/red]")
+                    raise typer.Exit(1)
+
     services = {
         "client": client,
         "auth": auth,
@@ -72,7 +106,7 @@ async def _ensure_user(client: TLUClient):
         "calendar": CalendarService(client),
         "custom": CustomService(),
     }
-    return user, services
+    return user, services, used_offline
 
 
 @app.command()
@@ -117,6 +151,9 @@ def register(
         help="Tự sniff môn fail (mặc định theo Settings)",
     ),
     interval: float = typer.Option(Config.SNIFF_INTERVAL, "--sniff-interval", help="Interval sniff (giây)"),
+    offline: bool = typer.Option(
+        False, "--offline", help="Bỏ qua 3 API call lúc khởi động, dùng cache user_info.json"
+    ),
 ):
     """Đăng ký môn theo chỉ số / tất cả / từ custom profile."""
     Config.ensure_dirs()
@@ -124,7 +161,7 @@ def register(
     async def _run():
         client = TLUClient()
         try:
-            user, services = await _ensure_user(client)
+            user, services, _ = await _ensure_user(client, offline=offline)
             register_svc: RegisterService = services["register"]
             course_svc: CourseService = services["course"]
             custom_svc: CustomService = services["custom"]
@@ -174,6 +211,9 @@ def sniff(
     indices: List[int] = typer.Option([], "--index", "-i", help="Chỉ số môn cần săn (lặp lại được)"),
     summer: bool = typer.Option(False, "--summer", help="Học kỳ hè"),
     interval: float = typer.Option(Config.SNIFF_INTERVAL, "--interval", help="Giây giữa các lần poll"),
+    offline: bool = typer.Option(
+        False, "--offline", help="Bỏ qua 3 API call lúc khởi động, dùng cache user_info.json"
+    ),
 ):
     """Săn môn (check-then-register) cho tới khi hết hoặc Ctrl-C."""
     Config.ensure_dirs()
@@ -181,7 +221,7 @@ def sniff(
     async def _run():
         client = TLUClient()
         try:
-            user, services = await _ensure_user(client)
+            user, services, _ = await _ensure_user(client, offline=offline)
             course_svc: CourseService = services["course"]
             register_svc: RegisterService = services["register"]
             if not indices:
@@ -207,14 +247,21 @@ def sniff(
 
 
 @app.command("export-ics")
-def export_ics():
+def export_ics(
+    offline: bool = typer.Option(
+        False, "--offline", help="Bị reject — chức năng này cần mạng", hidden=True
+    ),
+):
     """Xuất lịch học ra file .ics."""
+    if offline:
+        console.print("[red]Export-ics cần kết nối mạng.[/red]")
+        raise typer.Exit(1)
     Config.ensure_dirs()
 
     async def _run():
         client = TLUClient()
         try:
-            user, services = await _ensure_user(client)
+            user, services, _ = await _ensure_user(client)
             cal: CalendarService = services["calendar"]
             path = await cal.export_ics(user)
             console.print(f"[green]Đã tạo:[/green] {path}")
@@ -225,14 +272,21 @@ def export_ics():
 
 
 @app.command("sync-calendar")
-def sync_calendar():
+def sync_calendar(
+    offline: bool = typer.Option(
+        False, "--offline", help="Bị reject — chức năng này cần mạng", hidden=True
+    ),
+):
     """Đồng bộ lịch học lên Google Calendar."""
+    if offline:
+        console.print("[red]Sync-calendar cần kết nối mạng.[/red]")
+        raise typer.Exit(1)
     Config.ensure_dirs()
 
     async def _run():
         client = TLUClient()
         try:
-            user, services = await _ensure_user(client)
+            user, services, _ = await _ensure_user(client)
             cal: CalendarService = services["calendar"]
             events = await cal.get_tlu_events(user)
             await asyncio.to_thread(
@@ -270,6 +324,9 @@ def profile_run(
         help="Tự sniff môn fail (mặc định theo Settings)",
     ),
     interval: float = typer.Option(Config.SNIFF_INTERVAL, "--sniff-interval"),
+    offline: bool = typer.Option(
+        False, "--offline", help="Bỏ qua 3 API call lúc khởi động, dùng cache user_info.json"
+    ),
 ):
     """Chạy một custom profile (đăng ký + sniff nếu có fail)."""
     Config.ensure_dirs()
@@ -281,7 +338,7 @@ def profile_run(
     async def _run():
         client = TLUClient()
         try:
-            user, services = await _ensure_user(client)
+            user, services, _ = await _ensure_user(client, offline=offline)
             with open(os.path.join(Config.RES_DIR, "custom", name), "r", encoding="utf-8") as f:
                 data = json.load(f)
             target_courses = [Course(d) for d in data]
