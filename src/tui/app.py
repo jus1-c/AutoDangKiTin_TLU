@@ -1287,7 +1287,7 @@ def _push_register_flow(
         )
         app.push_screen(cd)
         # Chờ CountdownScreen dismiss (tự động khi tới giờ hoặc user hủy).
-        await cd.dismissed_event.wait()
+        await cd.dismissed.wait()
         # Nếu tới giờ → push LogScreen. Nếu user hủy → về menu.
         if fired[0]:
             await _go_log()
@@ -1328,6 +1328,10 @@ class CountdownScreen(ModalScreen):
         self.title_text = title
         self._timer_handle = None
         self._fired = False
+        # asyncio.Event set khi screen bị dismiss (timeout hoặc cancel).
+        # Worker chờ event này thay vì dùng dismissed_event (không có
+        # trong Textual 8.x).
+        self.dismissed = asyncio.Event()
 
     def compose(self) -> ComposeResult:
         with Container(id="countdown-container"):
@@ -1365,11 +1369,7 @@ class CountdownScreen(ModalScreen):
                 self._fired = True
                 if self._timer_handle is not None:
                     self._timer_handle.stop()
-                self.dismiss()
-                try:
-                    self._on_done()
-                except Exception as e:
-                    print(f"[ERROR] countdown on_done: {e}")
+                self._dismiss_with(self._on_done)
             return
         # Format HH:MM:SS
         total_sec = remaining // 1000
@@ -1390,12 +1390,19 @@ class CountdownScreen(ModalScreen):
     def action_cancel(self) -> None:
         if self._timer_handle is not None:
             self._timer_handle.stop()
+        self._dismiss_with(self._on_cancel)
+
+    def _dismiss_with(self, callback: Optional[Callable[[], None]]) -> None:
+        """Dismiss + set dismissed event + invoke callback. Idempotent."""
+        if self.dismissed.is_set():
+            return
         self.dismiss()
-        if self._on_cancel is not None:
+        self.dismissed.set()
+        if callback is not None:
             try:
-                self._on_cancel()
+                callback()
             except Exception as e:
-                print(f"[ERROR] countdown on_cancel: {e}")
+                print(f"[ERROR] countdown callback: {e}")
 
 
 def _time_now() -> float:
