@@ -169,20 +169,22 @@ class RegisterService:
         return False, None  # network/timeout hết attempt
 
     async def _send_register_request(self, url: str, data: dict) -> tuple:
-        """Một request POST. Retry tối đa Config.BURST_MAX_ATTEMPTS lần
-        khi server trả response không parse được / 5xx / timeout. BỎ QUA
-        (return False) ngay với 4xx client errors (401/403/...) vì
-        retry vô ích — token hết hạn hoặc bị block.
+        """Một request POST. BẮN VÔ HẠN cho tới khi server trả JSON parseable:
 
-        Trả (success, json_status). json_status là int từ response JSON
-        nếu parse được, None nếu network/timeout. status=-6 nghĩa là
-        lớp đã đầy — caller sẽ sniff.
+        - status=0 → (True, 0) thành công
+        - status=-6 → (False, -6) lớp đầy — caller sẽ sniff
+        - status khác (401/403/-1/...) → (False, status) return ngay
+        - network/timeout/5xx/non-JSON/429 → retry vô hạn (chỉ Ctrl+C mới dừng)
+
+        Vì sao retry vô hạn: server TLU hay timeout/503 lúc cao điểm
+        đăng ký. Bỏ BURST_MAX_ATTEMPTS để bắn đến khi server phản hồi
+        đúng (JSON parseable). Auth 401/403 thì return ngay vì retry
+        vô ích (token hết hạn).
         """
-        max_attempts = max(1, int(getattr(Config, "BURST_MAX_ATTEMPTS", 3)))
         timeout = float(getattr(Config, "BURST_REQUEST_TIMEOUT", 10.0))
         attempt = 0
         async with self._get_semaphore():
-            while attempt < max_attempts:
+            while True:
                 attempt += 1
                 try:
                     response = await self.client.request(
@@ -191,33 +193,40 @@ class RegisterService:
                 except (httpx.ConnectError, httpx.TimeoutException,
                         httpx.ReadTimeout, httpx.WriteTimeout,
                         httpx.ConnectTimeout) as e:
-                    print(f"[BURST] attempt {attempt}/{max_attempts}: timeout/network error: "
-                          f"{type(e).__name__}: {e}")
+                    print(f"[BURST] attempt {attempt}: timeout/network error: "
+                          f"{type(e).__name__}: {e}. Tiếp tục bắn...")
+                    await asyncio.sleep(0.1)
                     continue
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
-                    print(f"[BURST] attempt {attempt}/{max_attempts}: "
-                          f"{type(e).__name__}: {e}")
+                    print(f"[BURST] attempt {attempt}: "
+                          f"{type(e).__name__}: {e}. Tiếp tục bắn...")
+                    await asyncio.sleep(0.1)
                     continue
 
                 status = getattr(response, "status_code", "?")
                 if status in (401, 403):
-                    # Client error — token hết hạn hoặc bị block. Không retry.
+                    # Client error — token hết hạn hoặc bị block. Retry vô ích.
                     body = (getattr(response, "text", "") or "")[:200]
                     print(f"[BURST] HTTP {status} — bỎ QUA, không retry. "
                           f"Body[:200]: {body!r}")
                     return False, status
                 if status >= 500:
                     body = (getattr(response, "text", "") or "")[:200]
-                    print(f"[BURST] attempt {attempt}/{max_attempts}: HTTP {status} "
-                          f"(server error). Body[:200]: {body!r}")
+                    print(f"[BURST] attempt {attempt}: HTTP {status} "
+                          f"(server error). Body[:200]: {body!r}. Tiếp tục bắn...")
+                    await asyncio.sleep(0.1)
                     continue
                 # 2xx (or 3xx/4xx-other) — parse JSON
                 try:
                     res_json = response.json()
                 except Exception as e:
                     body = (getattr(response, "text", "") or "")[:200]
-                    print(f"[BURST] attempt {attempt}/{max_attempts}: "
-                          f"response không phải JSON: {e}. Body[:200]: {body!r}")
+                    print(f"[BURST] attempt {attempt}: "
+                          f"response không phải JSON: {e}. Body[:200]: {body!r}. "
+                          f"T Tiếp tục bắn...")
+                    await asyncio.sleep(0.1)
                     continue
                 # status field trong JSON
                 json_status = res_json.get("status")
@@ -228,16 +237,14 @@ class RegisterService:
                     print(f"[BURST] HTTP {status} + JSON status={json_status} — bỎ QUA.")
                     return False, json_status
                 if json_status in (429,):
-                    print(f"[BURST] attempt {attempt}/{max_attempts}: rate limited (429)")
+                    print(f"[BURST] attempt {attempt}: rate limited (429). Tiếp tục bắn...")
+                    await asyncio.sleep(0.1)
                     continue
-                # status != 0 (vd -6 lớp đầy, -1 validation, ...) → fail
+                # status != 0 (vd -6 lớp đầy, -1 validation, ...) → return
                 msg = res_json.get("message") or res_json.get("error") or ""
-                print(f"[BURST] attempt {attempt}/{max_attempts}: server từ chối "
-                      f"(status={json_status}, msg={msg[:100]!r}). BỎ QUA, không retry.")
+                print(f"[BURST] attempt {attempt}: server từ chối "
+                      f"(status={json_status}, msg={msg[:100]!r})")
                 return False, json_status
-            # Hết attempt mà vẫn fail (network/timeout/429 liên tục)
-            print(f"[BURST] ĐÃ HẾT {max_attempts} attempt, bỎ QUA.")
-            return False, None
 
     async def _find_course_info(self, data: dict, target_code: str) -> Optional[dict]:
         """
