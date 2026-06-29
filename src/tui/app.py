@@ -385,7 +385,13 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
                 with Horizontal(id="continuous-login-row", classes="opt-row"):
                     yield ToggleSwitch(value=False, id="continuous-login")
                     yield Label("Bắn login liên tục đến khi có token")
-            yield Static("", id="login-error")
+            yield RichLog(
+                id="login-log",
+                highlight=True,
+                markup=True,
+                wrap=True,
+                max_lines=200,
+            )
             with Vertical(id="login-buttons"):
                 yield Button("Đăng nhập", id="login-btn", variant="primary")
                 yield Button("Thoát", id="cancel-btn", variant="default")
@@ -404,8 +410,8 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
                 # hoặc tắt toggle "Bắn liên tục". Click "Thoát" lần nữa
                 # mới dismiss.
                 self._cancel_event.set()
-                err = self.query_one("#login-error", Static)
-                err.update("Đang hủy bắn request login...")
+                err = self.query_one("#login-log", RichLog)
+                err.write("Đang hủy bắn request login...")
             else:
                 self.dismiss(None)
             return
@@ -419,7 +425,7 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
     async def _attempt_login(self) -> None:
         offline = self.query_one("#offline-mode", ToggleSwitch).value
         continuous = self.query_one("#continuous-login", ToggleSwitch).value
-        err = self.query_one("#login-error", Static)
+        err = self.query_one("#login-log", RichLog)
         self.query_one("#login-btn", Button).disabled = True
         try:
             if offline:
@@ -430,36 +436,52 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
             else:
                 await self._attempt_online_login()
         except Exception as e:  # noqa: BLE001
-            err.update(f"Lỗi: {e}")
+            err.write(f"Lỗi: {e}")
             self.query_one("#login-btn", Button).disabled = False
 
     async def _attempt_continuous_login(self) -> None:
         """Bắn request login liên tục cho đến khi thành công / user hủy /
         hết thời gian. Click "Thoát" giữa chừng sẽ set cancel event.
+        Log progress vào RichLog — mỗi attempt 1 dòng, auto-scroll.
+        Debug mode (Config.DEBUG=True) hiện thêm chi tiết.
         """
+        import time
         u = self.query_one("#username", Input).value.strip()
         p = self.query_one("#password", Input).value
         save = self.query_one("#save-login", ToggleSwitch).value
-        err = self.query_one("#login-error", Static)
+        log = self.query_one("#login-log", RichLog)
         if not u or not p:
-            err.update("Thiếu tên đăng nhập hoặc mật khẩu.")
+            log.write("[red]Thiếu tên đăng nhập hoặc mật khẩu.[/red]")
             self.query_one("#login-btn", Button).disabled = False
             return
         self._cancel_event.clear()
         self._retrying = True
-        err.update("Đang bắn request login (lần 1)...")
+        log.write("[bold]Đang bắn request login liên tục (lần 1)...[/bold]")
+        log.write(f"[dim]  endpoint: {Config.TLU_LOGIN_URL}[/dim]" if Config.DEBUG else "")
         client = TLUClient()
+        start_ts = time.monotonic()
         try:
             auth = AuthService(client)
 
             def on_progress(attempt: int, error_msg: Optional[str]) -> None:
+                elapsed = time.monotonic() - start_ts
+                ts = time.strftime("%H:%M:%S")
                 if error_msg is None:
-                    err.update(f"Thành công ở lần {attempt}!")
-                else:
-                    err.update(
-                        f"Lần {attempt} thất bại ({error_msg[:80]}). "
-                        f"Đang thử lại..."
+                    log.write(
+                        f"[green]✓ [{ts}] Thành công ở lần {attempt} "
+                        f"(sau {elapsed:.1f}s)[/green]"
                     )
+                else:
+                    log.write(
+                        f"[yellow]✗ [{ts}] Lần {attempt} ({elapsed:.1f}s): "
+                        f"{error_msg[:80]}[/yellow]"
+                    )
+                    if Config.DEBUG:
+                        # Debug mode: in thêm context
+                        log.write(f"[dim]  raw: {error_msg!r}[/dim]")
+                # Force repaint — không có cái này RichLog đôi khi
+                # không refresh kịp, màn hình trông như đơ.
+                self.refresh()
 
             try:
                 user = await auth.login_until_success(
@@ -472,31 +494,31 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
                 self.dismiss({"user": user, "client": client, "offline": False})
             except Exception as e:  # noqa: BLE001
                 if self._cancel_event.is_set():
-                    err.update("Đã hủy bắn request login.")
+                    log.write("[red]Đã hủy bắn request login.[/red]")
                 else:
-                    err.update(f"Lỗi: {e}")
+                    log.write(f"[red]Lỗi: {e}[/red]")
                 try:
                     await client.close()
                 except Exception:
                     pass
                 self.query_one("#login-btn", Button).disabled = False
         except Exception as e:  # noqa: BLE001
-            err.update(f"Lỗi: {e}")
+            log.write(f"[red]Lỗi: {e}[/red]")
             self.query_one("#login-btn", Button).disabled = False
         finally:
             self._retrying = False
 
     async def _attempt_offline_login(self) -> None:
         """Đăng nhập offline: 0 API call, dựng User từ res/user_info.json."""
-        err = self.query_one("#login-error", Static)
-        err.update("Đang tải dữ liệu offline...")
+        err = self.query_one("#login-log", RichLog)
+        err.write("Đang tải dữ liệu offline...")
         client = TLUClient()
         try:
             auth = AuthService(client)
             user = await auth.load_offline_user()
             self.dismiss({"user": user, "client": client, "offline": True})
         except Exception as e:  # noqa: BLE001
-            err.update(f"Offline lỗi: {e}")
+            err.write(f"Offline lỗi: {e}")
             try:
                 await client.close()
             except Exception:
@@ -509,12 +531,12 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
         u = self.query_one("#username", Input).value.strip()
         p = self.query_one("#password", Input).value
         save = self.query_one("#save-login", ToggleSwitch).value
-        err = self.query_one("#login-error", Static)
+        err = self.query_one("#login-log", RichLog)
         if not u or not p:
-            err.update("Thiếu tên đăng nhập hoặc mật khẩu.")
+            err.write("Thiếu tên đăng nhập hoặc mật khẩu.")
             self.query_one("#login-btn", Button).disabled = False
             return
-        err.update("Đang đăng nhập...")
+        err.write("Đang đăng nhập...")
         client = TLUClient()
         try:
             auth = AuthService(client)
@@ -526,7 +548,7 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
                 if AuthService._is_network_error(e) and os.path.exists(
                     Config.USER_INFO_FILE
                 ):
-                    err.update("Mất mạng — đang chuyển sang chế độ offline...")
+                    err.write("Mất mạng — đang chuyển sang chế độ offline...")
                     try:
                         user = await auth.load_offline_user()
                         self.dismiss(
@@ -534,16 +556,16 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
                         )
                         return
                     except Exception as off_e:  # noqa: BLE001
-                        err.update(f"Offline fallback lỗi: {off_e}")
+                        err.write(f"Offline fallback lỗi: {off_e}")
                 else:
-                    err.update(f"Lỗi: {e}")
+                    err.write(f"Lỗi: {e}")
                 try:
                     await client.close()
                 except Exception:
                     pass
                 self.query_one("#login-btn", Button).disabled = False
         except Exception as e:  # noqa: BLE001
-            err.update(f"Lỗi: {e}")
+            err.write(f"Lỗi: {e}")
             self.query_one("#login-btn", Button).disabled = False
 
 
@@ -1961,10 +1983,14 @@ class TLUApp(App):
     #login-container Input {
         margin: 0;
     }
-    #login-error {
-        color: #ed8796;
-        padding: 1 0 0 0;
-        text-align: center;
+    #login-log {
+        height: 8;
+        min-height: 5;
+        width: 100%;
+        border: round #5b6078;
+        background: #181926;
+        margin: 1 0;
+        padding: 0 1;
     }
     #login-buttons {
         padding-top: 1;
