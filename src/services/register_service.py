@@ -109,18 +109,34 @@ class RegisterService:
         return failed_courses
 
     async def register_single_subject(self, url: str, courses: List[Course], failed_list: List[Course]) -> bool:
+        """Attempts to register. Nếu tất cả fail, CHỈ add lớp đầu vào
+        `failed_list` (cho sniffing) khi status = -6 (lớp đã đầy).
+        Các lỗi khác (401/403 auth, 429 rate limit, network, server 5xx,
+        status khác) KHÔNG trigger sniffing — vì retry vô ích.
         """
-        Attempts to register. If all fail, adds the first course to failed_list for sniffing.
-        """
+        last_status: Optional[int] = None
         for course in courses:
             print(f"Đang thử đăng ký: {course.display_name} ({course.code})")
-            success = await self._burst_request(url, course.data)
+            success, status = await self._burst_request(url, course.data)
+            last_status = status
             if success:
                 print(f"THÀNH CÔNG: Đã đăng ký {course.display_name}")
                 return True
-        
+            # status = -6 nghĩa là lớp đã đầy → cần sniff chờ lớp mở.
+            # Các status khác: 401/403 (auth fail), 429 (rate limit),
+            # None (network/timeout/5xx hết attempt), -1/-2/etc (validation)
+            # → KHÔNG add vào failed_list, caller không nên sniff.
+            if status == -6:
+                print(f"LỚP ĐẦY: {course.display_name} (status=-6) → sẽ sniff")
+            else:
+                print(
+                    f"THẤT BẠI (không sniff): {course.display_name} "
+                    f"(status={status})"
+                )
+
         print(f"THẤT BẠI: Không đăng ký được môn {courses[0].display_name if courses else ''}")
-        if courses:
+        # Chỉ sniff khi lớp cuối cùng thử bị status=-6 (lớp đầy).
+        if courses and last_status == -6:
             failed_list.append(courses[0])
         return False
 
@@ -131,17 +147,36 @@ class RegisterService:
             self.semaphore = asyncio.Semaphore(self._semaphore_limit)
         return self.semaphore
 
-    async def _burst_request(self, url: str, data: dict, count: Optional[int] = None) -> bool:
+    async def _burst_request(self, url: str, data: dict, count: Optional[int] = None) -> tuple:
+        """Bắn `count` request song song. Trả (success, json_status):
+        - success=True nếu BẤT KỲ request nào trả status=0
+        - success=False: json_status = status của request fail. Ưu tiên
+          -6 (lớp đầy) nếu có ít nhất 1 request trả -6, ngược lại lấy
+          status cuối cùng (None nếu tất cả fail vì network/timeout).
+        """
         n = count if count is not None else Config.BURST_COUNT
         tasks = [self._send_register_request(url, data) for _ in range(n)]
         results = await asyncio.gather(*tasks)
-        return any(results)
+        # success flag
+        if any(ok for ok, _ in results):
+            return True, 0
+        # Tất cả fail — chọn status đại diện
+        statuses = [s for _, s in results if s is not None]
+        if -6 in statuses:
+            return False, -6  # lớp đầy — sniff
+        if statuses:
+            return False, statuses[-1]
+        return False, None  # network/timeout hết attempt
 
-    async def _send_register_request(self, url: str, data: dict) -> bool:
+    async def _send_register_request(self, url: str, data: dict) -> tuple:
         """Một request POST. Retry tối đa Config.BURST_MAX_ATTEMPTS lần
         khi server trả response không parse được / 5xx / timeout. BỎ QUA
         (return False) ngay với 4xx client errors (401/403/...) vì
         retry vô ích — token hết hạn hoặc bị block.
+
+        Trả (success, json_status). json_status là int từ response JSON
+        nếu parse được, None nếu network/timeout. status=-6 nghĩa là
+        lớp đã đầy — caller sẽ sniff.
         """
         max_attempts = max(1, int(getattr(Config, "BURST_MAX_ATTEMPTS", 3)))
         timeout = float(getattr(Config, "BURST_REQUEST_TIMEOUT", 10.0))
@@ -170,7 +205,7 @@ class RegisterService:
                     body = (getattr(response, "text", "") or "")[:200]
                     print(f"[BURST] HTTP {status} — bỎ QUA, không retry. "
                           f"Body[:200]: {body!r}")
-                    return False
+                    return False, status
                 if status >= 500:
                     body = (getattr(response, "text", "") or "")[:200]
                     print(f"[BURST] attempt {attempt}/{max_attempts}: HTTP {status} "
@@ -187,22 +222,22 @@ class RegisterService:
                 # status field trong JSON
                 json_status = res_json.get("status")
                 if json_status == 0:
-                    return True
+                    return True, 0
                 # Có status nhưng != 0 (vd 401, 403, 429 trong JSON)
                 if json_status in (401, 403):
                     print(f"[BURST] HTTP {status} + JSON status={json_status} — bỎ QUA.")
-                    return False
+                    return False, json_status
                 if json_status in (429,):
                     print(f"[BURST] attempt {attempt}/{max_attempts}: rate limited (429)")
                     continue
-                # status != 0, lý do khác → fail, không retry
+                # status != 0 (vd -6 lớp đầy, -1 validation, ...) → fail
                 msg = res_json.get("message") or res_json.get("error") or ""
                 print(f"[BURST] attempt {attempt}/{max_attempts}: server từ chối "
                       f"(status={json_status}, msg={msg[:100]!r}). BỎ QUA, không retry.")
-                return False
-            # Hết attempt mà vẫn fail
+                return False, json_status
+            # Hết attempt mà vẫn fail (network/timeout/429 liên tục)
             print(f"[BURST] ĐÃ HẾT {max_attempts} attempt, bỎ QUA.")
-            return False
+            return False, None
 
     async def _find_course_info(self, data: dict, target_code: str) -> Optional[dict]:
         """
