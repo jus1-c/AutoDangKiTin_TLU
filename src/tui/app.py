@@ -377,9 +377,11 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
                 with Horizontal(id="save-login-row", classes="opt-row"):
                     yield ToggleSwitch(value=self._default_save, id="save-login")
                     yield Label("Lưu đăng nhập")
+                yield Static("", classes="opt-spacer")
                 with Horizontal(id="offline-mode-row", classes="opt-row"):
                     yield ToggleSwitch(value=False, id="offline-mode")
                     yield Label("Offline (dùng cache)")
+                yield Static("", classes="opt-spacer")
                 with Horizontal(id="continuous-login-row", classes="opt-row"):
                     yield ToggleSwitch(value=False, id="continuous-login")
                     yield Label("Bắn login liên tục đến khi có token")
@@ -1929,10 +1931,13 @@ class TLUApp(App):
     }
     .opt-row {
         height: 1;
-        margin: 0 0 1 0;
+        margin: 0;
+        padding: 0;
     }
-    .opt-row:last-child {
-        margin-bottom: 0;
+    /* Spacer widget giữa các opt-row để gap đều tuyệt đối, không phụ
+       thuộc margin collapse hay :last-child selector. */
+    .opt-spacer {
+        height: 1;
     }
     #login-buttons {
         height: auto;
@@ -1940,10 +1945,7 @@ class TLUApp(App):
     }
     #login-buttons Button {
         width: 100%;
-        margin-bottom: 1;
-    }
-    #login-buttons Button:last-child {
-        margin-bottom: 0;
+        margin: 0 0 1 0;
     }
     #login-title {
         text-align: center;
