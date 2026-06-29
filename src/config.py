@@ -58,7 +58,18 @@ class Config:
     )
     
     # Paths
-    RES_DIR = "res"
+    # RES_DIR phải là absolute path dựa trên project root, KHÔNG phụ thuộc
+    # working directory. Nếu dùng đường dẫn tương đối ("res"), file sẽ bị
+    # tạo ở thư mục sai khi user chạy app từ chỗ khác (vd: shortcut, alias,
+    # service, IDE debugger). Bug này khiến user_info.json không xuất hiện
+    # ở project root → offline mode không hoạt động.
+    if getattr(sys, 'frozen', False):
+        # PyInstaller: dùng thư mục chứa executable
+        _PROJECT_ROOT = os.path.dirname(sys.executable)
+    else:
+        # src/config.py → src/ → project root
+        _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    RES_DIR = os.path.join(_PROJECT_ROOT, "res")
     TOKEN_FILE = os.path.join(RES_DIR, "token.json")
     USER_INFO_FILE = os.path.join(RES_DIR, "user_info.json")
     LOGIN_FILE = os.path.join(RES_DIR, "login.json")
@@ -67,10 +78,8 @@ class Config:
 
     @classmethod
     def ensure_dirs(cls):
-        if not os.path.exists(cls.RES_DIR):
-            os.makedirs(cls.RES_DIR)
-        if not os.path.exists(os.path.join(cls.RES_DIR, "custom")):
-            os.makedirs(os.path.join(cls.RES_DIR, "custom"))
+        os.makedirs(cls.RES_DIR, exist_ok=True)
+        os.makedirs(os.path.join(cls.RES_DIR, "custom"), exist_ok=True)
 
     @classmethod
     def load_settings(cls):
