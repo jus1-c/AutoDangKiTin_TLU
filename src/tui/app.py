@@ -174,7 +174,12 @@ class LogScreen(Screen):
         Binding("ctrl+c", "stop", "Dừng", show=True),
     ]
 
-    def __init__(self, title: str = "Logs", status_rows: Optional[List[Dict[str, Any]]] = None):
+    def __init__(
+        self,
+        title: str = "Logs",
+        status_rows: Optional[List[Dict[str, Any]]] = None,
+        on_mount_start: Optional[Callable[[], None]] = None,
+    ):
         super().__init__()
         self.title_text = title
         self.stop_event = asyncio.Event()
@@ -184,6 +189,11 @@ class LogScreen(Screen):
         self.status_rows = status_rows or []
         # Internal map: row_key → DataTable row_key
         self._row_keys: Dict[str, str] = {}
+        # Callback chạy SAU on_mount (khi screen đã mount + table đã seed).
+        # Dùng để start worker ngay khi screen sẵn sàng → tránh race
+        # condition: nếu run_async gọi trước khi screen mount, query_one
+        # bên trong worker sẽ fail → status không update.
+        self._on_mount_start = on_mount_start
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -227,6 +237,12 @@ class LogScreen(Screen):
                 col.auto_width = False
                 col.width = w
         self.query_one("#stop-btn", Button).focus()
+        # Start worker SAU khi table đã seed (đảm bảo _row_keys đầy đủ).
+        if self._on_mount_start is not None:
+            try:
+                self._on_mount_start()
+            except Exception as e:
+                print(f"[ERROR] on_mount_start: {e}")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "stop-btn":
@@ -1246,15 +1262,24 @@ def _push_register_flow(
     Chạy toàn bộ flow trong một worker (cần thiết cho push_screen_wait).
     `work_factory(ctx)` là coroutine sẽ chạy trong worker của LogScreen.
     """
-
     async def _worker():
-        async def _go_log():
-            log_screen = LogScreen(log_title, status_rows=status_rows)
-            await app.push_screen_wait(log_screen)
-            log_screen.run_async(work_factory)
+        def _go_log():
+            # Push LogScreen (không await push_screen_wait — sẽ treo
+            # vĩnh viễn vì LogScreen chỉ dismiss khi user click 'Quay
+            # lại' hoặc khi worker kết thúc, mà worker chưa chạy).
+            # Truyền on_mount_start = lambda chạy log_screen.run_async SAU
+            # khi screen đã mount xong (table đã seed rows) → tránh race
+            # condition: query_one trong worker sẽ không fail nữa.
+            log_screen = LogScreen(
+                log_title,
+                status_rows=status_rows,
+                on_mount_start=lambda: log_screen.run_async(work_factory),
+            )
+            app.push_screen(log_screen)
+            return log_screen
 
         if not Config.SCHEDULE_ENABLED:
-            await _go_log()
+            _go_log()
             return
 
         course_svc: CourseService = services.get("course")
@@ -1268,14 +1293,14 @@ def _push_register_flow(
             print(f"[WARN] get_registration_start: {e}")
             target_ms = None
         if target_ms is None or target_ms <= 0:
-            await _go_log()
+            _go_log()
             return
 
         now_ms = int(_time_now() * 1000)
         lead = max(0, int(Config.SCHEDULE_LEAD_SECONDS))
         launch_ms = target_ms - lead * 1000
         if launch_ms <= now_ms:
-            await _go_log()
+            _go_log()
             return
 
         # CountdownScreen sẽ set fired[0]=True khi tới giờ, False khi hủy.
@@ -1299,7 +1324,7 @@ def _push_register_flow(
         await cd.dismissed.wait()
         # Nếu tới giờ → push LogScreen. Nếu user hủy → về menu.
         if fired[0]:
-            await _go_log()
+            _go_log()
         # else: cancelled, do nothing (back to menu)
 
     app.run_worker(_worker(), exclusive=False)
