@@ -384,7 +384,7 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
                     yield ToggleSwitch(value=False, id="continuous-login")
                     yield Label("Bắn login liên tục đến khi có token")
             yield Static("", id="login-error")
-            with Horizontal(id="login-buttons"):
+            with Vertical(id="login-buttons"):
                 yield Button("Đăng nhập", id="login-btn", variant="primary")
                 yield Button("Thoát", id="cancel-btn", variant="default")
 
@@ -1929,7 +1929,21 @@ class TLUApp(App):
     }
     .opt-row {
         height: 1;
-        margin: 0;
+        margin: 0 0 1 0;
+    }
+    .opt-row:last-child {
+        margin-bottom: 0;
+    }
+    #login-buttons {
+        height: auto;
+        width: 100%;
+    }
+    #login-buttons Button {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    #login-buttons Button:last-child {
+        margin-bottom: 0;
     }
     #login-title {
         text-align: center;
