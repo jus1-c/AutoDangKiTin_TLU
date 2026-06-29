@@ -1,6 +1,6 @@
 # AutoDangKiTin_TLU
 
-Tool tự động đăng ký tín chỉ trường ĐH Thăng Long (TLU).
+Tool tự động đăng ký tín chỉ trường ĐH Thuỷ Lợi (TLU).
 
 ## Cài đặt
 
