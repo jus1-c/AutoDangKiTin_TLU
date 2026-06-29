@@ -264,4 +264,93 @@ class AuthService:
             user.semester_summer_id = _FALLBACK_SUMMER_ID
             print(f"[WARNING] No summer period found, using fallback ID: {_FALLBACK_SUMMER_ID}")
 
+        # Persist danh tính cho offline mode (dùng sau này khi mất mạng).
+        self._save_user_info(user)
+
         return user
+
+    @staticmethod
+    def _save_user_info(user: User) -> None:
+        """Lưu danh tính User vào res/user_info.json để load offline.
+        Lỗi IO không làm fail cả login — chỉ log warning.
+        """
+        import time
+        try:
+            os.makedirs(os.path.dirname(Config.USER_INFO_FILE) or ".", exist_ok=True)
+            payload = user.to_dict()
+            payload["saved_at"] = int(time.time() * 1000)
+            with open(Config.USER_INFO_FILE, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except OSError as e:
+            print(f"[WARNING] Could not save user_info.json: {e}")
+
+    async def load_offline_user(self) -> User:
+        """Tải User từ cache (res/user_info.json) — 0 API call.
+
+        Yêu cầu:
+        - res/user_info.json tồn tại (đã đăng nhập online ít nhất 1 lần)
+        - res/token.json tồn tại (token vẫn còn trên máy)
+
+        Raises Exception với message rõ ràng nếu thiếu file.
+        """
+        import time
+        for required, label in [
+            (Config.USER_INFO_FILE, "user_info.json"),
+            (Config.TOKEN_FILE, "token.json"),
+            (Config.LOGIN_FILE, "login.json"),
+        ]:
+            if not os.path.exists(required):
+                raise Exception(
+                    f"Chưa có dữ liệu offline ({label}). "
+                    f"Cần đăng nhập online ít nhất 1 lần trước."
+                )
+
+        try:
+            with open(Config.USER_INFO_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            raise Exception(f"user_info.json lỗi/không đọc được: {e}")
+
+        # Đọc username từ login.json (file gốc của auto-login)
+        try:
+            with open(Config.LOGIN_FILE, "r", encoding="utf-8") as f:
+                login = json.load(f)
+            username = login.get("username", data.get("username", ""))
+        except (json.JSONDecodeError, OSError):
+            username = data.get("username", "")
+
+        # Rebuild User
+        data["username"] = username
+        user = User.from_dict(data)
+
+        # Load token vào client (không validate) — để các call register/sniff
+        # dùng được nếu mạng quay lại.
+        loaded = await self.client.load_session(validate=False)
+        if not loaded:
+            raise Exception("token.json lỗi/không đọc được.")
+
+        saved_at = data.get("saved_at")
+        if saved_at:
+            age_s = (time.time() * 1000 - saved_at) / 1000
+            if age_s > 60:
+                print(f"[INFO] Offline user info cached {age_s:.0f}s ago.")
+
+        return user
+
+    @staticmethod
+    def _is_network_error(exc: Exception) -> bool:
+        """Phân biệt lỗi mạng (timeout/connect/DNS) với lỗi đăng nhập
+        (sai mật khẩu, token hết hạn). Dùng cho auto-fallback sang offline.
+        """
+        from src.core.exceptions import NetworkError, SessionExpiredError
+        if isinstance(exc, NetworkError):
+            return True
+        name = type(exc).__name__
+        if name in ("ConnectError", "ConnectTimeout", "ReadTimeout",
+                    "WriteTimeout", "PoolTimeout", "TimeoutException"):
+            return True
+        msg = str(exc).lower()
+        return any(kw in msg for kw in (
+            "connection failed", "connection error", "timed out",
+            "timeout", "connecterror", "connection refused",
+        ))

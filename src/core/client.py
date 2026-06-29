@@ -29,7 +29,14 @@ class TLUClient:
     async def close(self):
         await self.client.aclose()
 
-    async def load_session(self) -> bool:
+    async def load_session(self, validate: bool = True) -> bool:
+        """Load saved token into headers/cookies.
+
+        validate=True (default): gọi get_student_info để kiểm tra token
+        còn sống. Dùng cho auto-login online.
+        validate=False: chỉ nạp token, không gọi API. Dùng cho offline mode
+        (các call sau sẽ tự fail nếu mạng mất, nhưng không block ngay).
+        """
         if not os.path.exists(Config.TOKEN_FILE):
             return False
         
@@ -38,7 +45,14 @@ class TLUClient:
                 data = json.load(f)
                 self.headers = {"Authorization": data.get("Authorization", "")}
                 self.cookies = {"token": data.get("token", "")}
-                
+
+                if not validate:
+                    # Offline mode — không gọi API, đánh dấu authenticated
+                    # theo token cache. Caller chịu trách nhiệm xử lý khi
+                    # các call sau gặp lỗi mạng.
+                    self.is_authenticated = True
+                    return True
+
                 try:
                     await self.get_student_info(check_only=True)
                     self.is_authenticated = True
