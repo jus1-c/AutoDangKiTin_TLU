@@ -1,10 +1,18 @@
+import asyncio
 import json
 import os
+import random
+import time
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 from src.config import Config
 from src.core.client import TLUClient
 from src.models.user import User
+
+# Callback cho login_until_success: (attempt_number, error_msg_or_None)
+LoginProgressFn = Callable[[int, Optional[str]], None]
+# Callback để dừng: trả True để cancel
+StopFn = Callable[[], bool]
 
 
 # Known fallback IDs (verified against live API — used as last resort)
@@ -354,3 +362,102 @@ class AuthService:
             "connection failed", "connection error", "timed out",
             "timeout", "connecterror", "connection refused",
         ))
+
+    async def login_until_success(
+        self,
+        username: str,
+        password: str,
+        save: bool = True,
+        on_progress: Optional[LoginProgressFn] = None,
+        should_stop: Optional[StopFn] = None,
+        max_duration_min: Optional[int] = None,
+    ) -> User:
+        """Bắn request login liên tục cho đến khi thành công, user hủy,
+        hoặc hết thời gian. Dùng khi server TLU quá tải (giờ cao điểm
+        đăng ký) — login endpoint thường xuyên timeout/503 trong vài phút
+        đầu mở đăng ký.
+
+        Retry chỉ lỗi MẠNG/SERVER (NetworkError, timeout, 5xx). KHÔNG
+        retry lỗi AUTH (sai mật khẩu, token không hợp lệ) — sẽ raise
+        ngay để user biết phải sửa credentials.
+
+        Backoff: 0.5s → 1.0s → 1.5s → ... cap 3s, + random ±0.2s jitter.
+        Giữa các lần thử, có thể bị Ctrl+C huỷ (CancelledError → raise
+        friendly message).
+
+        Args:
+            username/password: credentials.
+            save: lưu login.json khi thành công.
+            on_progress(attempt, error_msg): callback mỗi attempt. error_msg=None
+                nếu thành công, ngược lại là str(exception)[:100].
+            should_stop(): trả True để dừng ngay (vd: user bấm Hủy).
+            max_duration_min: None/0 = vô hạn; >0 = giới hạn phút.
+
+        Returns:
+            User đã login thành công.
+
+        Raises:
+            Exception("Đã hủy bắn request login.") nếu user cancel.
+            Exception("Đã bắn X phút mà chưa được. Dừng.") nếu hết TG.
+            Exception gốc nếu lỗi auth (sai mật khẩu, etc.).
+        """
+        start = time.monotonic()
+        attempt = 0
+        backoff_base = 0.5
+        backoff_jitter = 0.2
+        backoff_max = 3.0
+
+        while True:
+            if should_stop and should_stop():
+                raise Exception("Đã hủy bắn request login.")
+
+            if max_duration_min and max_duration_min > 0:
+                elapsed_min = (time.monotonic() - start) / 60
+                if elapsed_min > max_duration_min:
+                    raise Exception(
+                        f"Đã bắn {max_duration_min} phút mà chưa được. Dừng."
+                    )
+
+            attempt += 1
+            try:
+                user = await self.login(username, password, save=save)
+                if on_progress:
+                    try:
+                        on_progress(attempt, None)
+                    except Exception:
+                        pass
+                return user
+            except Exception as e:
+                if not AuthService._is_network_error(e):
+                    # Lỗi auth (sai mật khẩu, etc.) — không retry.
+                    if on_progress:
+                        try:
+                            on_progress(attempt, str(e)[:100])
+                        except Exception:
+                            pass
+                    raise
+                # Lỗi mạng → retry
+                delay = min(
+                    backoff_base * (1.5 ** min(attempt - 1, 5)),
+                    backoff_max,
+                )
+                delay += random.uniform(-backoff_jitter, backoff_jitter)
+                if on_progress:
+                    try:
+                        on_progress(attempt, str(e)[:100])
+                    except Exception:
+                        pass
+                # Sleep theo chunks 0.2s để user cancel phản ứng nhanh
+                # (không phải đợi cả delay). Tương tự _sleep_interval
+                # của sniffing_loop.
+                try:
+                    sleep_end = asyncio.get_event_loop().time() + max(0.1, delay)
+                    while True:
+                        if should_stop and should_stop():
+                            raise Exception("Đã hủy bắn request login.")
+                        remaining = sleep_end - asyncio.get_event_loop().time()
+                        if remaining <= 0:
+                            break
+                        await asyncio.sleep(min(remaining, 0.2))
+                except asyncio.CancelledError:
+                    raise Exception("Đã hủy bắn request login.")

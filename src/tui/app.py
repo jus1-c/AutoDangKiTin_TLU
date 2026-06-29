@@ -355,6 +355,10 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
         self._default_user = default_user or ""
         self._default_password = default_password or ""
         self._default_save = default_save
+        # Event set khi user bấm "Thoát" giữa lúc đang bắn login liên tục.
+        # Loop login_until_success check event này để thoát sạch.
+        self._cancel_event = asyncio.Event()
+        self._retrying = False
 
     def compose(self) -> ComposeResult:
         with Container(id="login-container"):
@@ -374,6 +378,9 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
             with Horizontal(id="offline-mode-row"):
                 yield ToggleSwitch(value=False, id="offline-mode")
                 yield Label("Chế độ offline (dùng dữ liệu đã lưu)")
+            with Horizontal(id="continuous-login-row"):
+                yield ToggleSwitch(value=False, id="continuous-login")
+                yield Label("Bắn request login liên tục đến khi có token")
             yield Static("", id="login-error")
             with Horizontal(id="login-buttons"):
                 yield Button("Đăng nhập", id="login-btn", variant="primary")
@@ -387,7 +394,16 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel-btn":
-            self.dismiss(None)
+            if self._retrying:
+                # Đang bắn login liên tục → set event để loop thoát.
+                # KHÔNG dismiss — user vẫn ở trên screen, có thể thử lại
+                # hoặc tắt toggle "Bắn liên tục". Click "Thoát" lần nữa
+                # mới dismiss.
+                self._cancel_event.set()
+                err = self.query_one("#login-error", Static)
+                err.update("Đang hủy bắn request login...")
+            else:
+                self.dismiss(None)
             return
         if event.button.id == "login-btn":
             await self._attempt_login()
@@ -398,16 +414,73 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
 
     async def _attempt_login(self) -> None:
         offline = self.query_one("#offline-mode", ToggleSwitch).value
+        continuous = self.query_one("#continuous-login", ToggleSwitch).value
         err = self.query_one("#login-error", Static)
         self.query_one("#login-btn", Button).disabled = True
         try:
             if offline:
+                # Offline ưu tiên cao hơn continuous (offline = 0 API call).
                 await self._attempt_offline_login()
+            elif continuous:
+                await self._attempt_continuous_login()
             else:
                 await self._attempt_online_login()
         except Exception as e:  # noqa: BLE001
             err.update(f"Lỗi: {e}")
             self.query_one("#login-btn", Button).disabled = False
+
+    async def _attempt_continuous_login(self) -> None:
+        """Bắn request login liên tục cho đến khi thành công / user hủy /
+        hết thời gian. Click "Thoát" giữa chừng sẽ set cancel event.
+        """
+        u = self.query_one("#username", Input).value.strip()
+        p = self.query_one("#password", Input).value
+        save = self.query_one("#save-login", ToggleSwitch).value
+        err = self.query_one("#login-error", Static)
+        if not u or not p:
+            err.update("Thiếu tên đăng nhập hoặc mật khẩu.")
+            self.query_one("#login-btn", Button).disabled = False
+            return
+        self._cancel_event.clear()
+        self._retrying = True
+        err.update("Đang bắn request login (lần 1)...")
+        client = TLUClient()
+        try:
+            auth = AuthService(client)
+
+            def on_progress(attempt: int, error_msg: Optional[str]) -> None:
+                if error_msg is None:
+                    err.update(f"Thành công ở lần {attempt}!")
+                else:
+                    err.update(
+                        f"Lần {attempt} thất bại ({error_msg[:80]}). "
+                        f"Đang thử lại..."
+                    )
+
+            try:
+                user = await auth.login_until_success(
+                    u,
+                    p,
+                    save=save,
+                    on_progress=on_progress,
+                    should_stop=lambda: self._cancel_event.is_set(),
+                )
+                self.dismiss({"user": user, "client": client, "offline": False})
+            except Exception as e:  # noqa: BLE001
+                if self._cancel_event.is_set():
+                    err.update("Đã hủy bắn request login.")
+                else:
+                    err.update(f"Lỗi: {e}")
+                try:
+                    await client.close()
+                except Exception:
+                    pass
+                self.query_one("#login-btn", Button).disabled = False
+        except Exception as e:  # noqa: BLE001
+            err.update(f"Lỗi: {e}")
+            self.query_one("#login-btn", Button).disabled = False
+        finally:
+            self._retrying = False
 
     async def _attempt_offline_login(self) -> None:
         """Đăng nhập offline: 0 API call, dựng User từ res/user_info.json."""
