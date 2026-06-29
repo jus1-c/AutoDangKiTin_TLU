@@ -444,6 +444,11 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
         hết thời gian. Click "Thoát" giữa chừng sẽ set cancel event.
         Log progress vào RichLog — mỗi attempt 1 dòng, auto-scroll.
         Debug mode (Config.DEBUG=True) hiện thêm chi tiết.
+
+        Retry loop chạy trong self.run_worker() để main event loop
+        luôn free xử lý UI events (cancel button, repaint, ...).
+        on_progress dùng call_later() để schedule write trên event
+        loop tiếp theo — tránh race với retry loop đang chạy.
         """
         import time
         u = self.query_one("#username", Input).value.strip()
@@ -457,56 +462,67 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
         self._cancel_event.clear()
         self._retrying = True
         log.write("[bold]Đang bắn request login liên tục (lần 1)...[/bold]")
-        log.write(f"[dim]  endpoint: {Config.TLU_LOGIN_URL}[/dim]" if Config.DEBUG else "")
-        client = TLUClient()
+        if Config.DEBUG:
+            log.write(f"[dim]  endpoint: {Config.TLU_LOGIN_URL}[/dim]")
         start_ts = time.monotonic()
-        try:
+        client = TLUClient()
+
+        def _write_progress(attempt: int, error_msg: Optional[str]) -> None:
+            elapsed = time.monotonic() - start_ts
+            ts = time.strftime("%H:%M:%S")
+            if error_msg is None:
+                log.write(
+                    f"[green]✓ [{ts}] Thành công ở lần {attempt} "
+                    f"(sau {elapsed:.1f}s)[/green]"
+                )
+            else:
+                log.write(
+                    f"[yellow]✗ [{ts}] Lần {attempt} ({elapsed:.1f}s): "
+                    f"{error_msg[:80]}[/yellow]"
+                )
+                if Config.DEBUG:
+                    log.write(f"[dim]  raw: {error_msg!r}[/dim]")
+
+        def _do_on_progress(attempt: int, error_msg: Optional[str]) -> None:
+            # call_later → schedule trên event loop tiếp theo, tránh
+            # ghi RichLog sync trong khi retry loop đang chạy (gây
+            # đơ UI trước đây).
+            self.call_later(_write_progress, attempt, error_msg)
+
+        async def _retry_worker() -> None:
+            """Chạy trong worker — main event loop free cho UI."""
             auth = AuthService(client)
-
-            def on_progress(attempt: int, error_msg: Optional[str]) -> None:
-                elapsed = time.monotonic() - start_ts
-                ts = time.strftime("%H:%M:%S")
-                if error_msg is None:
-                    log.write(
-                        f"[green]✓ [{ts}] Thành công ở lần {attempt} "
-                        f"(sau {elapsed:.1f}s)[/green]"
-                    )
-                else:
-                    log.write(
-                        f"[yellow]✗ [{ts}] Lần {attempt} ({elapsed:.1f}s): "
-                        f"{error_msg[:80]}[/yellow]"
-                    )
-                    if Config.DEBUG:
-                        # Debug mode: in thêm context
-                        log.write(f"[dim]  raw: {error_msg!r}[/dim]")
-                # Force repaint — không có cái này RichLog đôi khi
-                # không refresh kịp, màn hình trông như đơ.
-                self.refresh()
-
             try:
                 user = await auth.login_until_success(
                     u,
                     p,
                     save=save,
-                    on_progress=on_progress,
+                    on_progress=_do_on_progress,
                     should_stop=lambda: self._cancel_event.is_set(),
                 )
-                self.dismiss({"user": user, "client": client, "offline": False})
+                self.call_later(
+                    self.dismiss,
+                    {"user": user, "client": client, "offline": False},
+                )
             except Exception as e:  # noqa: BLE001
                 if self._cancel_event.is_set():
-                    log.write("[red]Đã hủy bắn request login.[/red]")
+                    self.call_later(
+                        log.write, "[red]Đã hủy bắn request login.[/red]"
+                    )
                 else:
-                    log.write(f"[red]Lỗi: {e}[/red]")
+                    self.call_later(log.write, f"[red]Lỗi: {e}[/red]")
                 try:
                     await client.close()
                 except Exception:
                     pass
-                self.query_one("#login-btn", Button).disabled = False
-        except Exception as e:  # noqa: BLE001
-            log.write(f"[red]Lỗi: {e}[/red]")
-            self.query_one("#login-btn", Button).disabled = False
-        finally:
-            self._retrying = False
+                def _reset_btn():
+                    self.query_one("#login-btn", Button).disabled = False
+                self.call_later(_reset_btn)
+            finally:
+                self._retrying = False
+
+        # exclusive=True → không chạy song song với worker khác của screen
+        self.run_worker(_retry_worker, exclusive=True)
 
     async def _attempt_offline_login(self) -> None:
         """Đăng nhập offline: 0 API call, dựng User từ res/user_info.json."""
