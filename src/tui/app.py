@@ -1234,52 +1234,49 @@ def _push_register_flow(
     CountdownScreen trước rồi mới push LogScreen. Ngược lại, push
     LogScreen thẳng.
 
-    `work_factory(ctx)` là coroutine sẽ chạy trong worker của LogScreen
-    (nhận ctx để gọi ctx.log / ctx.update_status / ctx.should_stop).
+    Chạy toàn bộ flow trong một worker (cần thiết cho push_screen_wait).
+    `work_factory(ctx)` là coroutine sẽ chạy trong worker của LogScreen.
     """
-    import asyncio as _asyncio
 
-    async def _go_log():
-        log_screen = LogScreen(log_title, status_rows=status_rows)
-        await app.push_screen_wait(log_screen)
-        log_screen.run_async(work_factory)
+    async def _worker():
+        async def _go_log():
+            log_screen = LogScreen(log_title, status_rows=status_rows)
+            await app.push_screen_wait(log_screen)
+            log_screen.run_async(work_factory)
 
-    if not Config.SCHEDULE_ENABLED:
-        app.call_later(_go_log)
-        return
-
-    async def _check_and_maybe_countdown():
-        course_svc: CourseService = services.get("course")
-        if course_svc is None:
-            # No service → skip countdown
-            app.call_later(_go_log)
+        if not Config.SCHEDULE_ENABLED:
+            await _go_log()
             return
+
+        course_svc: CourseService = services.get("course")
         try:
-            target_ms = await course_svc.get_registration_start(user, is_summer)
+            target_ms = (
+                await course_svc.get_registration_start(user, is_summer)
+                if course_svc is not None
+                else None
+            )
         except Exception as e:
             print(f"[WARN] get_registration_start: {e}")
             target_ms = None
         if target_ms is None or target_ms <= 0:
-            # Không lấy được target → skip countdown
-            app.call_later(_go_log)
+            await _go_log()
             return
+
         now_ms = int(_time_now() * 1000)
         lead = max(0, int(Config.SCHEDULE_LEAD_SECONDS))
         launch_ms = target_ms - lead * 1000
         if launch_ms <= now_ms:
-            # Đã qua launch moment rồi → không cần countdown
-            app.call_later(_go_log)
+            await _go_log()
             return
 
-        # Hiện CountdownScreen. Khi tới giờ → on_done push LogScreen.
+        # CountdownScreen sẽ set fired[0]=True khi tới giờ, False khi hủy.
+        fired = [False]
+
         def _on_done():
-            app.call_later(_go_log)
+            fired[0] = True
 
         def _on_cancel():
-            # Khi user hủy → về menu (pop CountdownScreen đã làm rồi,
-            # chỉ cần pop LogScreen nếu nó đã được push trước đó — nhưng
-            # chưa push, nên không cần làm gì).
-            pass
+            fired[0] = False
 
         cd = CountdownScreen(
             target_epoch_ms=target_ms,
@@ -1289,8 +1286,14 @@ def _push_register_flow(
             title=log_title,
         )
         app.push_screen(cd)
+        # Chờ CountdownScreen dismiss (tự động khi tới giờ hoặc user hủy).
+        await cd.dismissed_event.wait()
+        # Nếu tới giờ → push LogScreen. Nếu user hủy → về menu.
+        if fired[0]:
+            await _go_log()
+        # else: cancelled, do nothing (back to menu)
 
-    app.call_later(_check_and_maybe_countdown)
+    app.run_worker(_worker(), exclusive=False)
 
 
 class CountdownScreen(ModalScreen):
