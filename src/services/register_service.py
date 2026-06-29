@@ -45,16 +45,22 @@ class RegisterService:
             print("Không có môn nào để đăng ký.")
             return []
 
-        print("Đang gửi yêu cầu đăng ký...")
-        for (idx, first_course), task in zip(subject_info, tasks):
-            # Báo "đang gửi" trước khi burst để UI thấy tiến trình (tránh
-            # treo ở "Chờ" quá lâu nếu server chậm).
+        print("Đang gửi yêu cầu đăng ký (song song tất cả môn)...")
+        # Báo "đang gửi" cho từng môn TRƯỚC khi gather — UI thấy tiến trình
+        # ngay từ đầu, không phải đợi môn đầu xong mới biết môn 2 bắt đầu.
+        for idx, first_course in subject_info:
             if on_start is not None and first_course is not None:
                 try:
                     on_start(idx, first_course)
                 except Exception:
                     pass
-            success = await task
+        # Gather chạy tất cả môn SONG SONG — semaphore (CONCURRENCY_LIMIT)
+        # giới hạn tổng request đồng thời, không lo overwhelm server.
+        # Trước đây await từng task → tuần tự, môn sau đợi môn trước xong
+        # hết → chậm. Giờ cả 10 môn chạy cùng lúc, complete khi nào thì
+        # progress callback khi đó.
+        results = await asyncio.gather(*tasks)
+        for (idx, first_course), success in zip(subject_info, results):
             if on_progress is not None:
                 try:
                     on_progress(idx, success, first_course)
