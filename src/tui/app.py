@@ -500,10 +500,13 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
                     on_progress=_do_on_progress,
                     should_stop=lambda: self._cancel_event.is_set(),
                 )
-                self.call_later(
-                    self.dismiss,
-                    {"user": user, "client": client, "offline": False},
-                )
+                # call_later tự await return value của callback. Nếu
+                # callback return AwaitComplete (từ dismiss()), Textual
+                # raise "Can't await screen.dismiss() from message
+                # handler". Fix: wrap trong function thường return None.
+                def _do_dismiss(u=user, c=client):
+                    self.dismiss({"user": u, "client": c, "offline": False})
+                self.call_later(_do_dismiss)
             except Exception as e:  # noqa: BLE001
                 if self._cancel_event.is_set():
                     self.call_later(
