@@ -25,6 +25,9 @@ class TLUClient:
         self.headers = {}
         self.cookies = {}
         self.is_authenticated = False
+        # Lock chống concurrent auto-renew. Nếu 10 request cùng lúc
+        # đều 401, chỉ 1 renew, 9 request kia đợi rồi retry với token mới.
+        self._renew_lock = asyncio.Lock()
 
     async def close(self):
         await self.client.aclose()
@@ -151,32 +154,111 @@ class TLUClient:
         req_headers = kwargs.get('headers', {})
         req_headers.update(self.headers)
         kwargs['headers'] = req_headers
-        
+
         req_cookies = kwargs.get('cookies', {})
         req_cookies.update(self.cookies)
         kwargs['cookies'] = req_cookies
-        
+
         if Config.DEBUG:
             print(f"\n[DEBUG REQUEST] {method} {url}")
-            print(f"[DEBUG HEADERS] {kwargs['headers']}") 
+            print(f"[DEBUG HEADERS] {kwargs['headers']}")
 
         try:
             response = await self.client.request(method, url, **kwargs)
-            
-            if Config.DEBUG:
-                print(f"[DEBUG RESPONSE] {response.status_code}")
-                # In ra body nếu lỗi hoặc debug bật
-                if response.status_code != 200:
-                    print(f"[DEBUG ERROR BODY] {response.text[:1000]}") # Print first 1000 chars
-                else:
-                    # Print snippet for success too if debug
-                    try:
-                        print(f"[DEBUG BODY SNIPPET] {response.text[:200]}...")
-                    except:
-                        pass
-                
-            return response
         except httpx.RequestError as e:
             if Config.DEBUG:
                 print(f"[DEBUG ERROR] {e}")
             raise NetworkError(f"Request failed: {e}")
+
+        # Auto-renew token: 401 → thử login lại từ login.json + retry 1 lần.
+        # Lock ngăn 10 request đồng thời đều renew (chỉ 1 renew, 9 kia
+        # đợi rồi retry với token mới). get_student_info / get_semester_info
+        # / login KHÔNG đi qua request() → không bị auto-renew (giữ
+        # được validation flow cho load_session).
+        if response.status_code == 401:
+            renewed = await self._auto_renew_and_retry(method, url, **kwargs)
+            if renewed is not None:
+                response = renewed
+
+        if Config.DEBUG:
+            print(f"[DEBUG RESPONSE] {response.status_code}")
+            if response.status_code != 200:
+                print(f"[DEBUG ERROR BODY] {response.text[:1000]}")
+            else:
+                try:
+                    print(f"[DEBUG BODY SNIPPET] {response.text[:200]}...")
+                except Exception:
+                    pass
+
+        return response
+
+    async def _auto_renew_and_retry(
+        self, method: str, url: str, **kwargs
+    ):
+        """Thử renew token + retry request 1 lần. Trả response mới nếu
+        OK, None nếu renew/retry fail. Dùng lock + version counter để
+        chống concurrent renew thừa.
+
+        Nếu 10 request đồng thời đều 401:
+        - Tất cả capture _renew_version TRƯỚC khi vào lock
+        - Lock serialize. Request đầu vào lock thấy version chưa đổi
+          → gọi _try_renew_token, tăng version.
+        - 9 request sau vào lock thấy version ĐÃ đổi → skip renew,
+          chỉ retry với token mới. Tổng: 1 renew, 10 retry.
+        """
+        old_version = getattr(self, "_renew_version", 0)
+        async with self._renew_lock:
+            new_version = getattr(self, "_renew_version", 0)
+            if new_version == old_version:
+                # Chưa ai renew trong lúc ta đợi lock → ta renew
+                if not await self._try_renew_token():
+                    return None
+                self._renew_version = old_version + 1
+            # else: request khác đã renew trong lúc ta đợi lock
+            # Cập nhật headers/cookies với token MỚI — copy kwargs để
+            # không mutate input.
+            req_headers = dict(kwargs.get("headers", {}))
+            req_headers.update(self.headers)
+            req_cookies = dict(kwargs.get("cookies", {}))
+            req_cookies.update(self.cookies)
+            try:
+                return await self.client.request(
+                    method, url,
+                    headers=req_headers, cookies=req_cookies, **{
+                        k: v for k, v in kwargs.items()
+                        if k not in ("headers", "cookies")
+                    },
+                )
+            except httpx.RequestError as e:
+                raise NetworkError(f"Request failed (after renew): {e}")
+
+    async def _try_renew_token(self) -> bool:
+        """Đọc username/password từ login.json và gọi self.login().
+        Trả True nếu renew OK (token mới đã lưu vào self.headers).
+        Trả False nếu thiếu file, sai format, hoặc login fail.
+        """
+        if not os.path.exists(Config.LOGIN_FILE):
+            if Config.DEBUG:
+                print("[DEBUG] Auto-renew: không có login.json → bỏ qua")
+            return False
+        try:
+            with open(Config.LOGIN_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            username = data.get("username")
+            password = data.get("password")
+            if not username or not password:
+                if Config.DEBUG:
+                    print("[DEBUG] Auto-renew: login.json thiếu user/pass")
+                return False
+            if Config.DEBUG:
+                print(f"[DEBUG] Auto-renew: thử login lại với user={username}")
+            await self.login(username, password)
+            return True
+        except (json.JSONDecodeError, OSError) as e:
+            if Config.DEBUG:
+                print(f"[DEBUG] Auto-renew: đọc login.json lỗi: {e}")
+            return False
+        except Exception as e:
+            if Config.DEBUG:
+                print(f"[DEBUG] Auto-renew: login() fail: {e}")
+            return False
