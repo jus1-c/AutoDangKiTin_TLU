@@ -29,7 +29,14 @@ class CourseService:
             return None, None
         print(f"[INFO]   Response status: {response.status_code}")
         if response.status_code == 200 and response.text.strip():
-            data = response.json()
+            # m1 fix: guard response.json() — 200 với body malformed
+            # trước đây raise JSONDecodeError phá cả fetch (bỏ qua
+            # fallback/cache). Giờ xử như period fail.
+            try:
+                data = response.json()
+            except Exception as e:
+                print(f"[WARNING]   semester_id={sem_id} 200 nhưng body không phải JSON: {e}")
+                return None, response.status_code
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             return data, response.status_code

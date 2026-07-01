@@ -23,19 +23,25 @@ class TimeBlock:
 
     def conflicts_with(self, other: 'TimeBlock') -> bool:
         """Two blocks conflict if they share the same day-of-week AND
-        their period ranges overlap.
+        their period ranges overlap AND their date windows overlap.
 
-        Date range is intentionally NOT checked — it's a secondary
-        factor. In practice, any two classes on the same day + overlapping
-        periods would block each other regardless of the exact semester
-        start/end dates (you can't be in two places at once).
+        Date range check: 2 lớp cùng thứ + trùng tiết nhưng khác nửa
+        học kỳ (vd: tuần 1-8 vs tuần 9-16) KHÔNG conflict — có thể
+        học cả hai. Nếu thiếu start_date/end_date (None/0) → coi
+        như luôn overlap (an toàn: vẫn báo trùng).
         """
         if self.week_index != other.week_index:
             return False
-        if (self.start_period <= other.end_period
+        if not (self.start_period <= other.end_period
                 and other.start_period <= self.end_period):
-            return True
-        return False
+            return False
+        # Date overlap check — chỉ áp khi cả 2 đều có date hợp lệ
+        if (self.start_date and self.end_date
+                and other.start_date and other.end_date):
+            if not (self.start_date <= other.end_date
+                    and other.start_date <= self.end_date):
+                return False
+        return True
 
 
 @dataclass
@@ -165,17 +171,6 @@ class Course:
         if len(unique) == 1:
             return unique[0]
         return f"{unique[0]} → {unique[-1]}"
-
-    @property
-    def picker_detail(self) -> str:
-        """Short summary shown in CustomBuilderScreen after a class is picked.
-
-        Format: '1 -> 3, 2/7/2026' (or just whichever half is available).
-        """
-        p, d = self.period_range, self.date_range
-        if p and d:
-            return f"{p}, {d}"
-        return p or d
 
     @property
     def week_day(self) -> str:

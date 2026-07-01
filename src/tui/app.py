@@ -301,7 +301,13 @@ class LogScreen(Screen):
             except Exception as e:  # noqa: BLE001
                 log_widget.write(f"[ERROR] {e}")
             finally:
-                self.query_one("#stop-btn", Button).label = "Đã xong"
+                # m3 fix: nếu user pop screen trước khi worker xong, #stop-btn
+                # không còn tồn tại → NoMatches. Suppress để tránh unhandled
+                # worker error.
+                try:
+                    self.query_one("#stop-btn", Button).label = "Đã xong"
+                except Exception:
+                    pass
 
         self.worker_handle = self.app.run_worker(_runner(), exclusive=False)
 
@@ -423,6 +429,10 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
             await self._attempt_login()
 
     async def _attempt_login(self) -> None:
+        # m4 fix: nếu đang retry, ignore trigger login mới (Enter trong
+        # input khi _retrying=True) — tránh spawn worker thứ 2 leak client.
+        if self._retrying:
+            return
         offline = self.query_one("#offline-mode", ToggleSwitch).value
         continuous = self.query_one("#continuous-login", ToggleSwitch).value
         err = self.query_one("#login-log", RichLog)
@@ -1743,9 +1753,8 @@ class CalendarScreen(Screen):
         self.app.pop_screen()
 
     async def _export_ics(self) -> None:
-        log_screen = LogScreen("Xuất ICS")
-        self.app.push_screen(log_screen)
-
+        # m5 fix: dùng on_mount_start để tránh race — run_async gọi
+        # query_one("#log") có thể fail nếu screen chưa mount xong.
         async def _work(ctx: LogCaptureContext):
             cal: CalendarService = self.services["calendar"]
             try:
@@ -1754,12 +1763,14 @@ class CalendarScreen(Screen):
             except Exception as e:  # noqa: BLE001
                 ctx.log(f"[ERROR] {e}")
 
-        log_screen.run_async(_work)
-
-    async def _sync_google(self) -> None:
-        log_screen = LogScreen("Đồng bộ Google")
+        log_screen = LogScreen(
+            "Xuất ICS",
+            on_mount_start=lambda: log_screen.run_async(_work),
+        )
         self.app.push_screen(log_screen)
 
+    async def _sync_google(self) -> None:
+        # m5 fix: dùng on_mount_start để tránh race.
         async def _work(ctx: LogCaptureContext):
             cal: CalendarService = self.services["calendar"]
             try:
@@ -1774,7 +1785,11 @@ class CalendarScreen(Screen):
             except Exception as e:  # noqa: BLE001
                 ctx.log(f"[ERROR] {e}")
 
-        log_screen.run_async(_work)
+        log_screen = LogScreen(
+            "Đồng bộ Google",
+            on_mount_start=lambda: log_screen.run_async(_work),
+        )
+        self.app.push_screen(log_screen)
 
 
 # ---------- settings screen ----------
@@ -2194,6 +2209,16 @@ class TLUApp(App):
     def on_mount(self) -> None:
         self.title = "AutoDangKiTin TLU"
         self._do_login()
+
+    async def on_unmount(self) -> None:
+        """Close TLUClient khi app thoát để tránh leak httpx session
+        (warning 'Unclosed client session / Unclosed connector').
+        """
+        if self.client is not None:
+            try:
+                await self.client.close()
+            except Exception:
+                pass
 
     def _do_login(self) -> None:
         default_user = None
