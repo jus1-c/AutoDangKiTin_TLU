@@ -40,6 +40,12 @@ class Config:
     # trước khi vào register UI. Mốc đích = thời gian mở đăng kí (lấy từ API).
     SCHEDULE_ENABLED = os.getenv("SCHEDULE_ENABLED", "False").lower() in ("true", "1", "yes")
     SCHEDULE_LEAD_SECONDS = int(os.getenv("SCHEDULE_LEAD_SECONDS", 30))
+    # Class transfer (Feature 2): pre-burst lead = receiver bắt đầu bắn
+    # register TRƯỚC khi giver drop bao nhiêu giây (để request đập vào ngay
+    # khoảnh khắc slot mở). grab timeout = thời gian tối đa cố giành lớp
+    # trước khi bỏ cuộc + báo trạng thái cuối.
+    TRANSFER_PRE_BURST_LEAD = float(os.getenv("TRANSFER_PRE_BURST_LEAD", 0.5))
+    TRANSFER_GRAB_TIMEOUT = float(os.getenv("TRANSFER_GRAB_TIMEOUT", 10.0))
 
     # User-editable settings persisted to SETTINGS_FILE (subset of the above)
     _PERSIST_KEYS = (
@@ -52,6 +58,8 @@ class Config:
         "AUTO_SNIFF_FALLBACK",
         "SCHEDULE_ENABLED",
         "SCHEDULE_LEAD_SECONDS",
+        "TRANSFER_PRE_BURST_LEAD",
+        "TRANSFER_GRAB_TIMEOUT",
         "DEBUG",
     )
     
