@@ -2839,9 +2839,8 @@ class TLUApp(App):
 
     /* Rows that contain a ToggleSwitch + Label */
     #summer-row, #debug-row, .settings-row {
-        height: 3;
-        align-vertical: middle;
-        padding: 1 0 0 0;
+        height: auto;
+        margin: 1 0 0 0;
     }
     .settings-row Label {
         width: auto;
@@ -2873,9 +2872,8 @@ class TLUApp(App):
         text-style: bold;
     }
     .mb-row {
-        height: 3;
-        align-vertical: middle;
-        padding: 0 0 1 0;
+        height: auto;
+        margin: 0 0 1 0;
     }
     .mb-lbl {
         width: 16;
@@ -2964,9 +2962,8 @@ class TLUApp(App):
         padding-bottom: 1;
     }
     .tf-row {
-        height: 3;
-        align-vertical: middle;
-        padding: 0 0 1 0;
+        height: auto;
+        margin: 0 0 1 0;
     }
     .tf-row Input {
         width: 1fr;
