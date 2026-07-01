@@ -3,7 +3,7 @@ AutoDangKiTin TLU - Textual TUI
 
 Async-native terminal interface (replaces the hand-rolled ANSI TUI).
 
-Menu (5 items + 2 footer buttons):
+Menu (6 items + 2 footer buttons):
   1. Đăng ký nhanh        — multi-select (SelectionList) → burst register
                               → auto-sniff fails if AUTO_SNIFF_FALLBACK on
   2. Tạo danh sách custom — chọn lớp, lớp trùng lịch bị xám + không pick,
@@ -13,6 +13,8 @@ Menu (5 items + 2 footer buttons):
   4. Lịch                 — export ICS + sync Google Calendar
   5. Settings             — debug, interval, jitter, fallback toggle,
                               burst count, concurrency, đăng xuất
+  6. Multi-account (tạo)  — tạo file multireg (chỉ tạo — chạy bằng CLI:
+                              `autodktin multireg run <file>`)
   [Thoát]  [Đăng xuất]    — Thoát giữ session, Đăng xuất xóa token
 
 Stdout capture: `LogCapture` redirect sys.stdout -> RichLog widget during
@@ -55,6 +57,11 @@ from src.services.auth_service import AuthService
 from src.services.calendar_service import CalendarService
 from src.services.course_service import CourseService
 from src.services.custom_service import CustomService
+from src.services.multireg_service import (
+    MultiRegAccount,
+    MultiRegConfig,
+    MultiRegService,
+)
 from src.services.register_service import RegisterService
 
 
@@ -608,6 +615,7 @@ class MenuScreen(Screen):
         Binding("3", "profile", "Đăng ký profile"),
         Binding("4", "calendar", "Lịch"),
         Binding("5", "settings", "Settings"),
+        Binding("6", "multireg", "Multi-account"),
     ]
 
     def __init__(self, user: User, services: dict, offline: bool = False):
@@ -651,6 +659,7 @@ class MenuScreen(Screen):
             yield Button("3. Đăng ký theo profile", id="b3")
             yield Button("4. Lịch (ICS / Google)", id="b4", disabled=self.offline)
             yield Button("5. Settings", id="b5")
+            yield Button("6. Multi-account (tạo file, chạy bằng CLI)", id="b6")
             with Horizontal(id="menu-footer"):
                 yield Button("Thoát", id="exit-btn", variant="default")
                 yield Button("Đăng xuất", id="logout-btn", variant="error")
@@ -678,6 +687,8 @@ class MenuScreen(Screen):
                 self.app.push_screen(CalendarScreen(self.user, self.services))
         elif bid == "b5":
             self.app.push_screen(SettingsScreen(self.services))
+        elif bid == "b6":
+            self.app.push_screen(MultiRegListScreen(self.user, self.services))
         elif bid == "exit-btn":
             self.app.exit()
         elif bid == "logout-btn":
@@ -711,6 +722,9 @@ class MenuScreen(Screen):
 
     def action_settings(self) -> None:
         self.app.push_screen(SettingsScreen(self.services))
+
+    def action_multireg(self) -> None:
+        self.app.push_screen(MultiRegListScreen(self.user, self.services))
 
 
 # ---------- register screen (multi-select) ----------
@@ -1487,6 +1501,276 @@ class ProfileScreen(Screen):
         )
 
 
+# ---------- multireg screens (chỉ tạo/quản lý file — CHẠY BẰNG CLI) ----------
+
+
+class MultiRegListScreen(Screen):
+    """List file multireg trong res/multireg/. Tạo mới / xóa / xem chi tiết.
+
+    KHÔNG chạy được từ TUI theo yêu cầu — user phải dùng CLI:
+        autodktin multireg run <file>
+    """
+
+    BINDINGS = [
+        Binding("escape", "back", "Quay lại"),
+    ]
+
+    def __init__(self, user: User, services: dict):
+        super().__init__()
+        self.user = user
+        self.services = services
+        self.svc = MultiRegService()
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Container():
+            yield Label("MULTI-ACCOUNT REGISTER (chỉ tạo/quản lý file)", id="multireg-title")
+            yield Label(
+                "TUI chỉ tạo file. Để chạy: [b]autodktin multireg run <file>[/b] trong terminal.",
+                id="multireg-hint",
+            )
+            with Horizontal():
+                yield Button("Tạo file mới", id="new", variant="primary")
+                yield Button("Làm mới", id="refresh")
+                yield Button("Xóa file đã chọn", id="delete", variant="error")
+                yield Button("Quay lại", id="back")
+            yield DataTable(
+                id="multireg-table", zebra_stripes=True, cursor_type="row"
+            )
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one("#multireg-table", DataTable)
+        table.add_columns("STT", "Tên file", "Đợt", "Số acc", "Shared profile")
+        cols = list(table.columns.values())
+        widths = [5, 28, 20, 8, 24]
+        for col, w in zip(cols, widths):
+            col.auto_width = False
+            col.width = w
+        self._refresh()
+
+    def _refresh(self) -> None:
+        table = self.query_one("#multireg-table", DataTable)
+        table.clear()
+        for i, f in enumerate(self.svc.list_files()):
+            try:
+                cfg = self.svc.load(f)
+                table.add_row(
+                    str(i), f, cfg.name or "?", str(len(cfg.accounts)),
+                    cfg.shared_profile or "—", key=f,
+                )
+            except Exception as e:  # noqa: BLE001
+                table.add_row(str(i), f, f"lỗi: {e}", "?", "—", key=f)
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "back":
+            self.app.pop_screen()
+        elif bid == "refresh":
+            self._refresh()
+        elif bid == "new":
+            self.app.push_screen(
+                MultiRegBuilderScreen(self.user, self.services),
+                self._on_builder_done,
+            )
+        elif bid == "delete":
+            self._delete_selected()
+
+    def _on_builder_done(self, result: Optional[str]) -> None:
+        """Callback khi builder scren dismiss. result = filename hoặc None."""
+        if result:
+            self.notify(f"Đã lưu: {result}", severity="information")
+        self._refresh()
+
+    def _delete_selected(self) -> None:
+        table = self.query_one("#multireg-table", DataTable)
+        if table.cursor_row is None or table.cursor_row < 0:
+            self.notify("Chưa chọn file.", severity="warning")
+            return
+        files = self.svc.list_files()
+        if table.cursor_row >= len(files):
+            return
+        key = files[table.cursor_row]
+        self.svc.delete(key)
+        self._refresh()
+        self.notify(f"Đã xóa {key}", severity="information")
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+
+class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
+    """Form tạo file multireg mới. Dismiss với filename khi lưu OK, None khi hủy.
+
+    Layout:
+      - Tên đợt (Input)
+      - Shared profile (Input, dropdown gợi ý từ custom_svc.list_files)
+      - Bảng account đã thêm (DataTable với multi-row có thể xóa)
+      - Row form nhập account mới: username, password, profile, HK, quick
+      - Nút "Thêm account", "Lưu file", "Hủy"
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Hủy"),
+    ]
+
+    def __init__(self, user: User, services: dict):
+        super().__init__()
+        self.user = user
+        self.services = services
+        self.svc = MultiRegService()
+        self.custom_svc: CustomService = services["custom"]
+        # Danh sách account đang build (list of dict)
+        self._accounts: List[Dict[str, Any]] = []
+
+    def compose(self) -> ComposeResult:
+        with Container(id="multireg-builder-container"):
+            yield Label("TẠO FILE MULTIREG MỚI", id="multireg-builder-title")
+            with Horizontal(classes="mb-row"):
+                yield Label("Tên đợt:", classes="mb-lbl")
+                yield Input(placeholder="vd: dot1_thang7", id="mb-name")
+            with Horizontal(classes="mb-row"):
+                yield Label("Shared profile:", classes="mb-lbl")
+                yield Input(
+                    placeholder="tên file (Enter để bỏ trống)",
+                    id="mb-shared",
+                )
+            profiles = self.custom_svc.list_files()
+            hint = (
+                f"Custom profile có sẵn: {', '.join(profiles)}"
+                if profiles else "Chưa có custom profile nào — mỗi account phải có profile riêng."
+            )
+            yield Label(hint, id="mb-hint", markup=False)
+
+            yield Label("Danh sách account đã thêm:", id="mb-list-title")
+            yield DataTable(
+                id="mb-table", zebra_stripes=True, cursor_type="row",
+            )
+
+            yield Label("Thêm account mới:", id="mb-add-title")
+            with Horizontal(classes="mb-row"):
+                yield Label("Username:", classes="mb-lbl-narrow")
+                yield Input(placeholder="mã SV", id="mb-user")
+                yield Label("Password:", classes="mb-lbl-narrow")
+                yield Input(placeholder="mật khẩu", password=True, id="mb-pass")
+            with Horizontal(classes="mb-row"):
+                yield Label("Profile:", classes="mb-lbl-narrow")
+                yield Input(
+                    placeholder="rỗng = dùng shared",
+                    id="mb-profile",
+                )
+                yield ToggleSwitch(id="mb-summer", value=False)
+                yield Label("HK hè", classes="mb-lbl-narrow")
+                yield ToggleSwitch(id="mb-quick", value=True)
+                yield Label("Nhanh", classes="mb-lbl-narrow")
+            with Horizontal(id="mb-buttons"):
+                yield Button("+ Thêm account", id="add-acc", variant="primary")
+                yield Button("Xóa acc đã chọn", id="del-acc", variant="warning")
+                yield Button("Lưu file", id="save", variant="success")
+                yield Button("Hủy", id="cancel")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#mb-table", DataTable)
+        table.add_columns("STT", "Username", "Profile", "HK", "Nhanh")
+        cols = list(table.columns.values())
+        widths = [5, 16, 24, 8, 8]
+        for col, w in zip(cols, widths):
+            col.auto_width = False
+            col.width = w
+        self._refresh_table()
+
+    def _refresh_table(self) -> None:
+        table = self.query_one("#mb-table", DataTable)
+        table.clear()
+        for i, a in enumerate(self._accounts):
+            table.add_row(
+                str(i),
+                a["username"],
+                a.get("profile") or "(shared)",
+                "hè" if a.get("is_summer") else "chính",
+                "Y" if a.get("quick", True) else "N",
+                key=str(i),
+            )
+
+    def _add_account(self) -> None:
+        u = self.query_one("#mb-user", Input).value.strip()
+        p = self.query_one("#mb-pass", Input).value
+        prof = self.query_one("#mb-profile", Input).value.strip()
+        is_summer = self.query_one("#mb-summer", ToggleSwitch).value
+        quick = self.query_one("#mb-quick", ToggleSwitch).value
+        if not u or not p:
+            self.notify("Thiếu username hoặc password.", severity="warning")
+            return
+        # Check trùng username
+        if any(a["username"] == u for a in self._accounts):
+            self.notify(f"Username {u} đã có trong danh sách.", severity="warning")
+            return
+        acc: Dict[str, Any] = {
+            "username": u, "password": p,
+            "is_summer": is_summer, "quick": quick,
+        }
+        if prof:
+            acc["profile"] = prof
+        self._accounts.append(acc)
+        # Clear inputs
+        self.query_one("#mb-user", Input).value = ""
+        self.query_one("#mb-pass", Input).value = ""
+        self.query_one("#mb-profile", Input).value = ""
+        self._refresh_table()
+
+    def _delete_selected_account(self) -> None:
+        table = self.query_one("#mb-table", DataTable)
+        if table.cursor_row is None or table.cursor_row < 0:
+            self.notify("Chưa chọn account.", severity="warning")
+            return
+        if table.cursor_row >= len(self._accounts):
+            return
+        removed = self._accounts.pop(table.cursor_row)
+        self._refresh_table()
+        self.notify(f"Đã xóa {removed['username']}", severity="information")
+
+    def _save(self) -> None:
+        name = self.query_one("#mb-name", Input).value.strip()
+        shared = self.query_one("#mb-shared", Input).value.strip() or None
+        if not name:
+            self.notify("Thiếu tên đợt.", severity="warning")
+            return
+        if not self._accounts:
+            self.notify("Chưa có account nào.", severity="warning")
+            return
+        raw = {
+            "version": 1,
+            "name": name,
+            "shared_profile": shared,
+            "accounts": self._accounts,
+        }
+        try:
+            cfg = MultiRegConfig.from_dict(raw)
+        except ValueError as e:
+            self.notify(f"Config lỗi: {e}", severity="error")
+            return
+        try:
+            filename = self.svc.save(cfg)
+        except OSError as e:
+            self.notify(f"Ghi file lỗi: {e}", severity="error")
+            return
+        self.dismiss(filename)
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "cancel":
+            self.dismiss(None)
+        elif bid == "add-acc":
+            self._add_account()
+        elif bid == "del-acc":
+            self._delete_selected_account()
+        elif bid == "save":
+            self._save()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 # ---------- countdown screen (schedule) ----------
 
 
@@ -1952,6 +2236,61 @@ class TLUApp(App):
     }
     .settings-row Input {
         width: 24;
+    }
+
+    /* Multireg screens */
+    #multireg-title {
+        text-style: bold;
+        color: #c6a0f6;
+        padding: 1 0;
+    }
+    #multireg-hint {
+        color: #a5adcb;
+        padding-bottom: 1;
+    }
+    #multireg-builder-container {
+        padding: 1 2;
+        width: 90%;
+        height: 90%;
+        background: #1e2030;
+        border: round #c6a0f6;
+    }
+    #multireg-builder-title {
+        text-style: bold;
+        color: #c6a0f6;
+        text-align: center;
+        padding-bottom: 1;
+    }
+    .mb-row {
+        height: 3;
+        align-vertical: middle;
+        padding: 0 0 1 0;
+    }
+    .mb-lbl {
+        width: 16;
+        padding: 0 1 0 0;
+    }
+    .mb-lbl-narrow {
+        width: auto;
+        padding: 0 1 0 1;
+    }
+    .mb-row Input {
+        width: 32;
+    }
+    #mb-hint {
+        color: #a5adcb;
+        padding: 0 0 1 0;
+    }
+    #mb-list-title, #mb-add-title {
+        color: #c6a0f6;
+        text-style: bold;
+        padding: 1 0 0 0;
+    }
+    #mb-buttons {
+        padding-top: 1;
+    }
+    #mb-buttons Button {
+        margin: 0 1;
     }
 
     /* Countdown screen (schedule) */
