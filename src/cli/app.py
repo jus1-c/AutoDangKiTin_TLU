@@ -14,6 +14,9 @@ Usage:
   autodktin profile list
   autodktin profile run NAME
   autodktin profile delete NAME
+  autodktin multireg list
+  autodktin multireg create
+  autodktin multireg run FILE
 """
 from __future__ import annotations
 
@@ -33,6 +36,7 @@ from src.services.auth_service import AuthService
 from src.services.calendar_service import CalendarService
 from src.services.course_service import CourseService
 from src.services.custom_service import CustomService
+from src.services.multireg_service import MultiRegService
 from src.services.register_service import RegisterService
 
 app = typer.Typer(
@@ -44,6 +48,11 @@ console = Console()
 
 profile_app = typer.Typer(help="Quản lý hồ sơ custom (res/custom/*.json).")
 app.add_typer(profile_app, name="profile")
+
+multireg_app = typer.Typer(
+    help="Đăng ký nhiều account song song (res/multireg/*.json)."
+)
+app.add_typer(multireg_app, name="multireg")
 
 
 async def _ensure_user(client: TLUClient, offline: bool = False):
@@ -415,6 +424,145 @@ def profile_delete(
             raise typer.Abort()
     custom.delete_files([name])
     console.print(f"[green]Đã xóa {name}[/green]")
+
+
+# ---------- multireg commands ----------
+
+
+@multireg_app.command("list")
+def multireg_list():
+    """Liệt kê file multireg có trong res/multireg/."""
+    Config.ensure_dirs()
+    svc = MultiRegService()
+    files = svc.list_files()
+    if not files:
+        console.print("(Trống — chưa có file multireg)")
+        return
+    table = Table("STT", "File", "Tên", "Số acc")
+    for i, f in enumerate(files):
+        try:
+            cfg = svc.load(f)
+            table.add_row(str(i), f, cfg.name or "?", str(len(cfg.accounts)))
+        except Exception as e:  # noqa: BLE001
+            table.add_row(str(i), f, f"[red]lỗi: {e}[/red]", "?")
+    console.print(table)
+
+
+@multireg_app.command("create")
+def multireg_create(
+    name: str = typer.Option(..., "--name", "-n", help="Tên đợt (dùng làm filename)"),
+    shared_profile: Optional[str] = typer.Option(
+        None, "--shared-profile", help="Custom profile dùng chung cho các account không có profile riêng"
+    ),
+    account: List[str] = typer.Option(
+        [], "--account", "-a",
+        help="username:password[:profile[:summer[:quick]]] — lặp lại được. "
+             "summer=summer|main, quick=quick|noquick. VD: sv001:pass:file.json:main:quick",
+    ),
+):
+    """Tạo file multireg từ CLI (wizard prompt hoặc --account nhiều lần)."""
+    Config.ensure_dirs()
+    svc = MultiRegService()
+    accounts: List[dict] = []
+
+    # Parse --account flags (mỗi flag = 1 account)
+    for spec in account:
+        parts = spec.split(":")
+        if len(parts) < 2:
+            console.print(f"[red]--account cần format username:password[:profile[:summer[:quick]]]: {spec}[/red]")
+            raise typer.Exit(1)
+        acc: dict = {"username": parts[0], "password": parts[1]}
+        if len(parts) > 2 and parts[2]:
+            acc["profile"] = parts[2]
+        if len(parts) > 3:
+            acc["is_summer"] = parts[3].lower() in ("summer", "he", "hè", "true", "1")
+        if len(parts) > 4:
+            acc["quick"] = parts[4].lower() in ("quick", "true", "1")
+        accounts.append(acc)
+
+    # Nếu không có flag → interactive wizard
+    if not accounts:
+        console.print("[blue]Wizard tạo multireg. Bấm Enter với username trống để kết thúc.[/blue]")
+        while True:
+            u = typer.prompt("Username", default="", show_default=False)
+            if not u:
+                break
+            p = typer.prompt("Password", hide_input=True)
+            prof = typer.prompt("Profile file (Enter=dùng shared)", default="", show_default=False)
+            is_summer = typer.confirm("Học kỳ hè?", default=False)
+            quick = typer.confirm("Đăng ký nhanh (burst+sniff nếu fail)?", default=True)
+            acc = {"username": u, "password": p, "is_summer": is_summer, "quick": quick}
+            if prof:
+                acc["profile"] = prof
+            accounts.append(acc)
+
+    if not accounts:
+        console.print("[red]Không có account nào. Hủy.[/red]")
+        raise typer.Exit(1)
+
+    from src.services.multireg_service import MultiRegConfig
+    raw = {
+        "version": 1,
+        "name": name,
+        "accounts": accounts,
+    }
+    if shared_profile:
+        raw["shared_profile"] = shared_profile
+    try:
+        cfg = MultiRegConfig.from_dict(raw)
+    except ValueError as e:
+        console.print(f"[red]Config không hợp lệ: {e}[/red]")
+        raise typer.Exit(1)
+
+    filename = svc.save(cfg)
+    console.print(f"[green]Đã lưu:[/green] {filename} ({len(accounts)} account)")
+
+
+@multireg_app.command("run")
+def multireg_run(
+    file: str = typer.Argument(..., help="Tên file multireg (trong res/multireg/)"),
+):
+    """Chạy file multireg — login + đăng ký N account song song. CHỈ CLI chạy được."""
+    Config.ensure_dirs()
+    Config.load_settings()  # áp settings.json làm mặc định
+    svc = MultiRegService()
+
+    async def _run():
+        try:
+            cfg = svc.load(file)
+        except FileNotFoundError:
+            console.print(f"[red]Không tìm thấy file: {file}[/red]")
+            raise typer.Exit(1)
+        except ValueError as e:
+            console.print(f"[red]File không hợp lệ: {e}[/red]")
+            raise typer.Exit(1)
+
+        console.print(f"[blue]Chạy multireg[/blue] {cfg.name or '?'} ({len(cfg.accounts)} account, song song)")
+
+        def _on_progress(username: str, event: str, msg: str) -> None:
+            console.print(f"[{username}][{event}] {msg}", markup=False, highlight=False)
+
+        results = await svc.run(cfg, on_progress=_on_progress)
+
+        # Summary table — results là Dict[username, result_dict]
+        console.print()
+        table = Table("Username", "Kết quả", "Đăng ký", "Sniffed", "Còn fail", "Log", "Lỗi")
+        ok_all = True
+        for username, r in results.items():
+            status = "[green]✓[/green]" if r["success"] else "[red]✗[/red]"
+            reg = str(r.get("registered", 0))
+            sniffed = str(len(r.get("sniffed", [])))
+            failed = str(len(r.get("failed", [])))
+            log_short = os.path.basename(r.get("log_file", "")) if r.get("log_file") else "-"
+            err = (r.get("error") or "")[:60]
+            table.add_row(username, status, reg, sniffed, failed, log_short, err)
+            if not r["success"]:
+                ok_all = False
+        console.print(table)
+        if not ok_all:
+            raise typer.Exit(2)
+
+    asyncio.run(_run())
 
 
 def main() -> None:
