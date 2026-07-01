@@ -11,6 +11,36 @@ from src.config import Config
 LogFn = Callable[[str], None]
 StopFn = Callable[[], bool]
 
+# ---------- Phân loại status code khi đăng ký (tránh burst/spin vô nghĩa) ----------
+# Chỉ những status ĐÃ BIẾT CHẮC từ server TLU. Status khác → "lỗi không xác
+# định": xử lý an toàn = KHÔNG sniff, KHÔNG dừng cả môn (thử lớp kế cho chắc).
+#
+# Lưu ý: status=-2 (trùng lịch) trong ngữ cảnh ĐĂNG KÝ là lỗi CỐ ĐỊNH của lớp
+# → bỏ lớp, thử lớp khác cùng môn. Nhưng trong TRANSFER swap β, -2 là
+# own-conflict TẠM THỜI (còn giữ lớp cũ, sẽ hết sau khi drop) → phải spin
+# tiếp. Vì vậy _grab_loop dùng tập "dừng sớm" RIÊNG, không tái dùng 2 tập này.
+SUBJECT_LEVEL_ERRORS = {-4}   # đã đăng ký môn này rồi → mọi lớp khác cùng môn
+                              #   cũng fail → DỪNG CẢ MÔN (break loop lớp).
+CLASS_LEVEL_ERRORS = {-2}     # trùng lịch → lớp khác (giờ khác) cùng môn có
+                              #   thể OK → THỬ LỚP KẾ.
+SNIFFABLE_ERRORS = {-6}       # lớp đầy → chờ slot mở → đưa vào sniffing_loop.
+
+# Nhãn hiển thị cho log. Thiếu → "lỗi không xác định (status=X)".
+STATUS_LABELS = {
+    0: "thành công",
+    -2: "trùng lịch",
+    -4: "đã đăng ký môn này rồi",
+    -6: "lớp đầy",
+}
+
+
+def status_label(status: Optional[int]) -> str:
+    """Nhãn người-đọc cho 1 status code. Status lạ → lỗi không xác định."""
+    if status in STATUS_LABELS:
+        return STATUS_LABELS[status]
+    return f"lỗi không xác định (status={status})"
+
+
 class RegisterService:
     def __init__(self, client: TLUClient):
         self.client = client
@@ -128,21 +158,38 @@ class RegisterService:
             if success:
                 print(f"THÀNH CÔNG: Đã đăng ký {course.display_name}")
                 return True
-            # status = -6 nghĩa là lớp đã đầy → cần sniff chờ lớp mở.
-            # Các status khác: 401/403 (auth fail), 429 (rate limit),
-            # None (network/timeout/5xx hết attempt), -1/-2/etc (validation)
-            # → KHÔNG add vào failed_list, caller không nên sniff.
-            if status == -6:
-                print(f"LỚP ĐẦY: {course.display_name} (status=-6) → sẽ sniff")
+
+            # Phân loại status để tránh burst vô nghĩa các lớp còn lại:
+            # - SUBJECT_LEVEL_ERRORS (-4 đã ĐK môn): lỗi CẤP MÔN → mọi lớp
+            #   khác trong cùng môn cũng sẽ fail → BREAK, bỏ các lớp còn lại.
+            # - CLASS_LEVEL_ERRORS (-2 trùng lịch): lỗi CẤP LỚP → lớp khác
+            #   (giờ khác) có thể OK → thử lớp kế.
+            # - SNIFFABLE (-6 lớp đầy): đánh dấu để sniff (nếu là lớp cuối).
+            # - Còn lại: lỗi không xác định → log rõ, thử lớp kế (an toàn,
+            #   không đoán bừa), KHÔNG sniff.
+            label = status_label(status)
+            if status in SUBJECT_LEVEL_ERRORS:
+                print(
+                    f"LỖI CẤP MÔN ({label}): {course.display_name} "
+                    f"(status={status}) → bỏ qua các lớp còn lại của môn."
+                )
+                break
+            if status in SNIFFABLE_ERRORS:
+                print(f"LỚP ĐẦY: {course.display_name} (status={status}) → sẽ sniff")
+            elif status in CLASS_LEVEL_ERRORS:
+                print(
+                    f"THẤT BẠI cấp lớp ({label}): {course.display_name} "
+                    f"(status={status}) → thử lớp kế."
+                )
             else:
                 print(
-                    f"THẤT BẠI (không sniff): {course.display_name} "
-                    f"(status={status})"
+                    f"THẤT BẠI ({label}): {course.display_name} "
+                    f"(status={status}) → thử lớp kế, không sniff."
                 )
 
         print(f"THẤT BẠI: Không đăng ký được môn {courses[0].display_name if courses else ''}")
-        # Chỉ sniff khi lớp cuối cùng thử bị status=-6 (lớp đầy).
-        if courses and last_status == -6:
+        # Chỉ sniff khi lớp cuối cùng thử bị status sniffable (-6 lớp đầy).
+        if courses and last_status in SNIFFABLE_ERRORS:
             failed_list.append(courses[0])
         return False
 

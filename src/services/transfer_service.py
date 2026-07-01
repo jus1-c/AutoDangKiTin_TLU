@@ -25,10 +25,30 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from src.config import Config
 from src.models.course import Course
 from src.models.user import User
-from src.services.register_service import RegisterService
+from src.services.register_service import (
+    RegisterService,
+    SUBJECT_LEVEL_ERRORS,
+    status_label,
+)
 
 LogFn = Callable[[str], None]
 StopFn = Callable[[], bool]
+
+# Status đáng SPIN tiếp trong _grab_loop (ngữ cảnh transfer):
+# - -6 (lớp đầy): chờ slot mở khi giver drop.
+# - -2 (own-conflict TẠM THỜI trong swap β): còn giữ lớp cũ, sẽ hết sau drop.
+# Khác với ĐĂNG KÝ thường (ở đó -2 là trùng lịch cố định → bỏ lớp). Vì vậy
+# tập này ĐỊNH NGHĨA RIÊNG cho transfer, không tái dùng CLASS_LEVEL_ERRORS.
+# Gặp status ngoài tập này (vd -4 đã ĐK môn, hoặc lỗi lạ) → dừng grab sớm.
+GRAB_SPIN_STATUSES = {-2, -6}
+
+# Status mà _grab_loop VẪN spin tiếp (không dừng sớm):
+# - -6 (lớp đầy): chờ slot mở → đúng mục đích grab.
+# - -2 (own-conflict TẠM THỜI trong swap β): còn giữ lớp cũ, sẽ hết sau khi
+#   drop → phải spin. KHÁC ngữ nghĩa -2 ở register (trùng lịch cố định).
+# Mọi status khác (đặc biệt lỗi CẤP MÔN như -4 đã ĐK, hoặc lỗi lạ) → grab
+# vô nghĩa (spin tới hết timeout không đổi kết quả) → DỪNG SỚM.
+GRAB_SPIN_STATUSES = {-6, -2}
 
 
 class TransferService:
@@ -120,8 +140,13 @@ class TransferService:
         """Bắn burst register liên tục tới khi status=0 hoặc hết timeout.
 
         Dùng _burst_request (song song `count` request/lần). Trả
-        (success, last_status). status=-6 lớp đầy / -2 own-conflict →
-        tiếp tục bắn (chờ slot mở / chờ drop own class).
+        (success, last_status).
+
+        DỪNG SỚM để tránh spin vô nghĩa: chỉ -6 (lớp đầy, chờ slot mở) và
+        -2 (own-conflict tạm thời trong swap β, sẽ hết sau khi drop) mới
+        đáng spin tiếp (GRAB_SPIN_STATUSES). Gặp status khác — lỗi CẤP MÔN
+        (-4 đã ĐK) hoặc lỗi lạ — spin thêm cũng không đổi kết quả → return
+        ngay thay vì đợi hết timeout.
         """
         deadline = _time.monotonic() + timeout
         attempts = 0
@@ -140,6 +165,13 @@ class TransferService:
             if success:
                 on_log(f"[GRAB {label}] ✓ CHỤP ĐƯỢC (sau {attempts} lượt burst).")
                 return True, 0
+            # Dừng sớm nếu status không đáng spin (None=network cứ thử lại).
+            if status is not None and status not in GRAB_SPIN_STATUSES:
+                on_log(
+                    f"[GRAB {label}] ✗ DỪNG SỚM: {status_label(status)} "
+                    f"(status={status}) — spin thêm vô nghĩa."
+                )
+                return False, status
             await asyncio.sleep(0.05)
         on_log(
             f"[GRAB {label}] ✗ hết {timeout:.1f}s ({attempts} lượt burst), "
