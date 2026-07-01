@@ -44,6 +44,7 @@ from src.config import Config
 from src.core.client import TLUClient
 from src.models.course import Course
 from src.services.auth_service import AuthService
+from src.services.course_service import CourseService
 from src.services.custom_service import CustomService
 from src.services.register_service import RegisterService
 
@@ -59,6 +60,10 @@ class MultiRegAccount:
     password: str
     profile: Optional[str] = None  # None → dùng shared_profile
     is_summer: bool = False  # fallback cho profile v1 (không có sem_id)
+    # Subject mode (pick MÔN thay vì lớp — giống menu "1. Đăng ký nhanh").
+    # List of {"id": subjectId (int), "name": subjectName (str)}.
+    # Nếu có subjects → account chạy subject-mode (bỏ qua profile).
+    subjects: Optional[List[Dict[str, Any]]] = None
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "MultiRegAccount":
@@ -70,20 +75,36 @@ class MultiRegAccount:
             )
         # Bỏ qua key "quick" cũ nếu file legacy có — sniff fallback giờ là
         # global setting (Config.AUTO_SNIFF_FALLBACK), không còn per-account.
+        subjects_raw = d.get("subjects")
+        subjects: Optional[List[Dict[str, Any]]] = None
+        if isinstance(subjects_raw, list) and subjects_raw:
+            subjects = []
+            for s in subjects_raw:
+                if isinstance(s, dict) and s.get("id") is not None:
+                    subjects.append({
+                        "id": int(s["id"]),
+                        "name": str(s.get("name") or ""),
+                    })
+            if not subjects:
+                subjects = None
         return cls(
             username=str(u).strip(),
             password=str(p),
             profile=d.get("profile") or None,
             is_summer=bool(d.get("is_summer", False)),
+            subjects=subjects,
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out: Dict[str, Any] = {
             "username": self.username,
             "password": self.password,
             "profile": self.profile,
             "is_summer": self.is_summer,
         }
+        if self.subjects:
+            out["subjects"] = self.subjects
+        return out
 
 
 @dataclass
@@ -262,35 +283,49 @@ class MultiRegService:
             "error": None,
         }
 
-        _emit("start", f"Bắt đầu (profile={cfg.resolve_profile(acc)}, "
-                       f"is_summer={acc.is_summer})")
+        # Xác định chế độ: subject-mode (pick môn, giống menu "1. Đăng ký
+        # nhanh") nếu account có subjects; ngược lại profile-mode (pick lớp).
+        is_subject_mode = bool(acc.subjects)
 
-        # Load profile trước khi login (fail sớm nếu profile thiếu)
-        profile_name = cfg.resolve_profile(acc)
-        if not profile_name:
-            result["error"] = "Không có profile (per-account và shared đều rỗng)"
-            _emit("error", result["error"])
-            return result
+        mode_label = "subject-mode (pick môn)" if is_subject_mode else "profile-mode (pick lớp)"
+        _emit("start", f"Bắt đầu [{mode_label}] (is_summer={acc.is_summer})")
 
-        profile_path = os.path.join(Config.RES_DIR, "custom", profile_name)
-        if not os.path.exists(profile_path):
-            result["error"] = f"Profile không tồn tại: {profile_name}"
-            _emit("error", result["error"])
-            return result
+        # Profile-mode: load profile TRƯỚC khi login (fail sớm nếu thiếu).
+        courses: List[Course] = []
+        sem_id_from_profile: Optional[int] = None
+        if not is_subject_mode:
+            profile_name = cfg.resolve_profile(acc)
+            if not profile_name:
+                result["error"] = (
+                    "Không có profile (per-account và shared đều rỗng) "
+                    "và cũng không có subjects (subject-mode)."
+                )
+                _emit("error", result["error"])
+                return result
 
-        try:
-            sem_id_from_profile, courses = CustomService.load_profile(profile_path)
-        except (json.JSONDecodeError, OSError, ValueError) as e:
-            result["error"] = f"Profile lỗi: {e}"
-            _emit("error", result["error"])
-            return result
+            profile_path = os.path.join(Config.RES_DIR, "custom", profile_name)
+            if not os.path.exists(profile_path):
+                result["error"] = f"Profile không tồn tại: {profile_name}"
+                _emit("error", result["error"])
+                return result
 
-        if not courses:
-            result["error"] = f"Profile rỗng: {profile_name}"
-            _emit("error", result["error"])
-            return result
+            try:
+                sem_id_from_profile, courses = CustomService.load_profile(profile_path)
+            except (json.JSONDecodeError, OSError, ValueError) as e:
+                result["error"] = f"Profile lỗi: {e}"
+                _emit("error", result["error"])
+                return result
 
-        _emit("start", f"Profile {profile_name}: {len(courses)} lớp")
+            if not courses:
+                result["error"] = f"Profile rỗng: {profile_name}"
+                _emit("error", result["error"])
+                return result
+
+            _emit("start", f"Profile {profile_name}: {len(courses)} lớp "
+                           f"(is_summer={acc.is_summer})")
+        else:
+            _emit("start", f"Subject-mode: {len(acc.subjects)} môn "
+                           f"(is_summer={acc.is_summer}) — pick môn giống menu #1")
 
         # Login + register + (optional) sniff — mỗi account 1 client
         client = TLUClient()
@@ -302,68 +337,17 @@ class MultiRegService:
             user = await auth.login(acc.username, acc.password, save=False)
             _emit("login", f"Login OK: {user.full_name} (student_id={user.student_id})")
 
-            # Pick semester
-            active_sem_id: int
-            if sem_id_from_profile is not None:
-                active_sem_id = sem_id_from_profile
-                _emit("register", f"Semester từ profile: {active_sem_id}")
-            elif acc.is_summer:
-                active_sem_id = user.semester_summer_id
-                _emit("register", f"Semester = HK hè: {active_sem_id}")
-            else:
-                active_sem_id = user.semester_id
-                _emit("register", f"Semester = HK chính: {active_sem_id}")
-
             register = RegisterService(client)
 
-            # register_custom_for_semester nhận (user, courses, semester_id)
-            def _on_start(course: Course) -> None:
-                _log(f"→ gửi {course.code} ({course.display_name})")
-
-            def _on_progress(course: Course, success: bool) -> None:
-                if success:
-                    _log(f"✓ OK {course.code}")
-                else:
-                    _log(f"✗ FAIL {course.code}")
-
-            failed = await register.register_custom_for_semester(
-                user, courses, semester_id=active_sem_id,
-                on_start=_on_start, on_progress=_on_progress,
-            )
-
-            result["registered"] = len(courses) - len(failed)
-            result["failed"] = [c.code for c in failed]
-            _emit("register", f"Register xong: OK {result['registered']}/{len(courses)}, "
-                              f"fail {len(failed)}")
-
-            # Sniff fallback khi lớp đầy — hành vi MẶC ĐỊNH global giống
-            # menu "1. Đăng ký nhanh" (Config.AUTO_SNIFF_FALLBACK). Chỉ
-            # status=-6 (lớp đầy) mới vào failed_list để sniff.
-            if failed and Config.AUTO_SNIFF_FALLBACK:
-                _emit("sniff", f"Sniff {len(failed)} lớp fail (AUTO_SNIFF_FALLBACK)")
-                is_summer_for_sniff = (
-                    active_sem_id == user.semester_summer_id
+            if is_subject_mode:
+                await self._run_subject_mode(
+                    acc, user, register, result, _emit, _log,
                 )
-                sniff_failed = await register.sniffing_loop(
-                    user, failed,
-                    is_summer=is_summer_for_sniff,
-                    interval=Config.SNIFF_INTERVAL,
-                    jitter=Config.SNIFF_JITTER,
-                    max_duration_min=Config.SNIFF_MAX_DURATION_MIN,
-                    on_log=lambda m: _log(f"[SNIFF] {m}"),
+            else:
+                await self._run_profile_mode(
+                    acc, user, register, courses, sem_id_from_profile,
+                    result, _emit, _log,
                 )
-                still_failed_codes = {c.code for c in sniff_failed}
-                sniffed = [c for c in failed if c.code not in still_failed_codes]
-                result["sniffed"] = [c.code for c in sniffed]
-                result["registered"] += len(sniffed)
-                result["failed"] = [c.code for c in sniff_failed]
-                _emit("sniff", f"Sniff xong: săn được {len(sniffed)}, "
-                               f"còn fail {len(sniff_failed)}")
-
-            result["success"] = not result["failed"]
-            _emit("done",
-                  f"Hoàn tất: OK {result['registered']}/{len(courses)}, "
-                  f"còn fail {len(result['failed'])}")
         except Exception as e:  # noqa: BLE001
             result["error"] = f"{type(e).__name__}: {e}"
             _emit("error", result["error"])
@@ -373,3 +357,159 @@ class MultiRegService:
             except Exception:  # noqa: BLE001
                 pass
         return result
+
+    async def _run_profile_mode(
+        self,
+        acc: MultiRegAccount,
+        user,
+        register: RegisterService,
+        courses: List[Course],
+        sem_id_from_profile: Optional[int],
+        result: Dict[str, Any],
+        _emit: Callable[[str, str], None],
+        _log: Callable[[str], None],
+    ) -> None:
+        """Profile-mode: đăng ký danh sách LỚP cụ thể (register_custom_for_semester)."""
+        # Pick semester
+        if sem_id_from_profile is not None:
+            active_sem_id = sem_id_from_profile
+            _emit("register", f"Semester từ profile: {active_sem_id}")
+        elif acc.is_summer:
+            active_sem_id = user.semester_summer_id
+            _emit("register", f"Semester = HK hè: {active_sem_id}")
+        else:
+            active_sem_id = user.semester_id
+            _emit("register", f"Semester = HK chính: {active_sem_id}")
+
+        def _on_start(course: Course) -> None:
+            _log(f"→ gửi {course.code} ({course.display_name})")
+
+        def _on_progress(course: Course, success: bool) -> None:
+            _log(f"✓ OK {course.code}" if success else f"✗ FAIL {course.code}")
+
+        failed = await register.register_custom_for_semester(
+            user, courses, semester_id=active_sem_id,
+            on_start=_on_start, on_progress=_on_progress,
+        )
+
+        result["registered"] = len(courses) - len(failed)
+        result["failed"] = [c.code for c in failed]
+        _emit("register", f"Register xong: OK {result['registered']}/{len(courses)}, "
+                          f"fail {len(failed)}")
+
+        is_summer_for_sniff = (active_sem_id == user.semester_summer_id)
+        await self._sniff_fallback(
+            register, user, failed, is_summer_for_sniff, result, _emit, _log,
+            total=len(courses),
+        )
+
+    async def _run_subject_mode(
+        self,
+        acc: MultiRegAccount,
+        user,
+        register: RegisterService,
+        result: Dict[str, Any],
+        _emit: Callable[[str, str], None],
+        _log: Callable[[str], None],
+    ) -> None:
+        """Subject-mode: pick MÔN giống menu "1. Đăng ký nhanh".
+
+        fetch_courses (theo is_summer) → match subjectId → register_subjects
+        (mỗi môn thử các lớp trong nhóm cho tới khi 1 lớp được).
+        """
+        course_svc = CourseService(register.client)
+        _emit("register", f"Tải danh sách môn (is_summer={acc.is_summer})...")
+        all_courses, names = await course_svc.fetch_courses(user, acc.is_summer)
+
+        # Map subjectId → subject index trong all_courses.
+        # subjectId lấy từ course.data['subjectId'] (course-level, khớp
+        # subject.id lúc pick ở builder).
+        wanted_ids = {int(s["id"]) for s in (acc.subjects or [])}
+        wanted_names = {int(s["id"]): s.get("name", "") for s in (acc.subjects or [])}
+        selected_indices: List[int] = []
+        matched_ids: set = set()
+        for idx, group in enumerate(all_courses):
+            if not group:
+                continue
+            sid = group[0].data.get("subjectId")
+            if sid is not None and int(sid) in wanted_ids:
+                selected_indices.append(idx)
+                matched_ids.add(int(sid))
+
+        missing = wanted_ids - matched_ids
+        if missing:
+            miss_names = ", ".join(
+                f"{wanted_names.get(mid) or '?'} (id={mid})" for mid in sorted(missing)
+            )
+            _emit("register", f"⚠ Không tìm thấy {len(missing)} môn trong DS đăng ký: {miss_names}")
+
+        if not selected_indices:
+            result["error"] = (
+                "Không môn nào trong subjects khớp danh sách đăng ký "
+                "(có thể sai HK chính/hè, hoặc môn không mở đăng ký)."
+            )
+            _emit("error", result["error"])
+            return
+
+        _emit("register", f"Đăng ký {len(selected_indices)} môn (thử các lớp mỗi môn)...")
+
+        def _on_start(idx: int, course: Course) -> None:
+            _log(f"→ gửi môn {names[idx] if idx < len(names) else idx} "
+                 f"(lớp đầu {course.code if course else '?'})")
+
+        def _on_progress(idx: int, success: bool, course: Course) -> None:
+            nm = names[idx] if idx < len(names) else str(idx)
+            _log(f"✓ OK {nm} (lớp {course.code if course else '?'})"
+                 if success else f"✗ FAIL {nm}")
+
+        failed = await register.register_subjects(
+            user, selected_indices, all_courses, acc.is_summer,
+            on_start=_on_start, on_progress=_on_progress,
+        )
+
+        total = len(selected_indices)
+        result["registered"] = total - len(failed)
+        result["failed"] = [c.code for c in failed]
+        _emit("register", f"Register xong: OK {result['registered']}/{total} môn, "
+                          f"fail {len(failed)}")
+
+        await self._sniff_fallback(
+            register, user, failed, acc.is_summer, result, _emit, _log,
+            total=total,
+        )
+
+    async def _sniff_fallback(
+        self,
+        register: RegisterService,
+        user,
+        failed: List[Course],
+        is_summer: bool,
+        result: Dict[str, Any],
+        _emit: Callable[[str, str], None],
+        _log: Callable[[str], None],
+        total: int,
+    ) -> None:
+        """Sniff các lớp fail (status=-6 lớp đầy) — hành vi MẶC ĐỊNH global
+        giống menu "1. Đăng ký nhanh" (Config.AUTO_SNIFF_FALLBACK)."""
+        if failed and Config.AUTO_SNIFF_FALLBACK:
+            _emit("sniff", f"Sniff {len(failed)} lớp fail (AUTO_SNIFF_FALLBACK)")
+            sniff_failed = await register.sniffing_loop(
+                user, failed,
+                is_summer=is_summer,
+                interval=Config.SNIFF_INTERVAL,
+                jitter=Config.SNIFF_JITTER,
+                max_duration_min=Config.SNIFF_MAX_DURATION_MIN,
+                on_log=lambda m: _log(f"[SNIFF] {m}"),
+            )
+            still_failed_codes = {c.code for c in sniff_failed}
+            sniffed = [c for c in failed if c.code not in still_failed_codes]
+            result["sniffed"] = [c.code for c in sniffed]
+            result["registered"] += len(sniffed)
+            result["failed"] = [c.code for c in sniff_failed]
+            _emit("sniff", f"Sniff xong: săn được {len(sniffed)}, "
+                           f"còn fail {len(sniff_failed)}")
+
+        result["success"] = not result["failed"]
+        _emit("done",
+              f"Hoàn tất: OK {result['registered']}/{total}, "
+              f"còn fail {len(result['failed'])}")

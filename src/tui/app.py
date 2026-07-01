@@ -1600,15 +1600,144 @@ class MultiRegListScreen(Screen):
         self.app.pop_screen()
 
 
+class SubjectPickerScreen(ModalScreen[Optional[Dict[str, Any]]]):
+    """Login bằng creds nhập vào → fetch_courses → tick MÔN (giống menu #1).
+
+    Dùng cho subject-mode của multireg: account không gắn profile mà chọn
+    danh sách môn, lúc chạy sẽ thử các lớp trong mỗi môn (như Đăng ký nhanh).
+
+    Dismiss với {"is_summer": bool, "subjects": [{"id": int, "name": str}]}
+    khi bấm Xong, hoặc None khi Hủy.
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Hủy"),
+    ]
+
+    def __init__(self, username: str, password: str, services: dict):
+        super().__init__()
+        self._username = username
+        self._password = password
+        self.services = services
+        self.courses: List[List[Course]] = []
+        # index option → subjectId + name (để build kết quả khi Xong)
+        self._id_by_value: Dict[int, int] = {}   # value → subjectId
+        self._name_by_value: Dict[int, str] = {}  # value → subjectName
+        self._loaded = False
+
+    def compose(self) -> ComposeResult:
+        with Container(id="subpick-container"):
+            yield Label(f"CHỌN MÔN — {self._username}", id="subpick-title")
+            with Horizontal(classes="mb-row"):
+                yield ToggleSwitch(id="subpick-summer", value=False)
+                yield Label("Học kỳ hè")
+                yield Button("Đăng nhập + Tải môn", id="subpick-load", variant="primary")
+                yield Button("Chọn tất cả", id="subpick-all")
+                yield Button("Bỏ chọn", id="subpick-none")
+            yield Label("Bấm 'Đăng nhập + Tải môn' để lấy danh sách.", id="subpick-status", markup=False)
+            yield SelectionList[int](id="subpick-selection")
+            with Horizontal(id="subpick-buttons"):
+                yield Button("Xong", id="subpick-done", variant="success")
+                yield Button("Hủy", id="subpick-cancel")
+
+    def _is_summer(self) -> bool:
+        return self.query_one("#subpick-summer", ToggleSwitch).value
+
+    def _set_status(self, msg: str) -> None:
+        self.query_one("#subpick-status", Label).update(msg)
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "subpick-cancel":
+            self.dismiss(None)
+        elif bid == "subpick-load":
+            self.run_worker(self._load(), exclusive=True)
+        elif bid == "subpick-all":
+            self.query_one(SelectionList).select_all()
+        elif bid == "subpick-none":
+            self.query_one(SelectionList).deselect_all()
+        elif bid == "subpick-done":
+            self._done()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    async def _load(self) -> None:
+        """Login bằng creds → fetch_courses → populate SelectionList.
+
+        Client riêng, đóng ngay sau khi fetch xong (chỉ cần danh sách môn).
+        """
+        sel: SelectionList = self.query_one(SelectionList)
+        sel.clear_options()
+        self.courses = []
+        self._id_by_value.clear()
+        self._name_by_value.clear()
+        self._loaded = False
+        is_summer = self._is_summer()
+        self._set_status("Đang đăng nhập...")
+        client = TLUClient()
+        try:
+            auth = AuthService(client)
+            user = await auth.login(self._username, self._password, save=False)
+            self._set_status(
+                f"Login OK: {user.full_name}. Đang tải môn "
+                f"({'HK hè' if is_summer else 'HK chính'})..."
+            )
+            course_svc = CourseService(client)
+            self.courses, names = await course_svc.fetch_courses(user, is_summer)
+            count = 0
+            for i, name in enumerate(names):
+                if not self.courses[i]:
+                    continue
+                first = self.courses[i][0]
+                sid = first.data.get("subjectId")
+                if sid is None:
+                    continue
+                # value = subject index i (unique trong màn này); map sang
+                # subjectId + name để build kết quả.
+                self._id_by_value[i] = int(sid)
+                self._name_by_value[i] = name
+                n_classes = len(self.courses[i])
+                label = f"{name[:44]:<44}  ({n_classes} lớp)"
+                sel.add_option(Selection(label, i))
+                count += 1
+            self._loaded = True
+            self._set_status(
+                f"Đã tải {count} môn. Tick môn cần đăng ký rồi bấm 'Xong'."
+            )
+        except Exception as e:  # noqa: BLE001
+            self._set_status(f"Lỗi: {e}")
+            self.notify(f"Login/tải môn lỗi: {e}", severity="error")
+        finally:
+            try:
+                await client.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _done(self) -> None:
+        if not self._loaded:
+            self.notify("Chưa tải môn. Bấm 'Đăng nhập + Tải môn' trước.", severity="warning")
+            return
+        sel: SelectionList = self.query_one(SelectionList)
+        values = list(sel.selected)
+        if not values:
+            self.notify("Chưa tick môn nào.", severity="warning")
+            return
+        subjects = [
+            {"id": self._id_by_value[v], "name": self._name_by_value.get(v, "")}
+            for v in values
+            if v in self._id_by_value
+        ]
+        self.dismiss({"is_summer": self._is_summer(), "subjects": subjects})
+
+
 class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
     """Form tạo file multireg mới. Dismiss với filename khi lưu OK, None khi hủy.
 
-    Layout:
-      - Tên đợt (Input)
-      - Shared profile (Input, dropdown gợi ý từ custom_svc.list_files)
-      - Bảng account đã thêm (DataTable với multi-row có thể xóa)
-      - Row form nhập account mới: username, password, profile, HK, quick
-      - Nút "Thêm account", "Lưu file", "Hủy"
+    2 chế độ thêm account:
+      - Profile-mode: chọn custom profile (pick lớp cụ thể).
+      - Subject-mode: bấm "Chọn môn (đăng nhập)" → login → tick môn (giống
+        menu #1, pick môn thử các lớp). Không cần profile.
     """
 
     BINDINGS = [
@@ -1676,17 +1805,23 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
                     profile_options, allow_blank=False, value="",
                     id="mb-profile",
                 )
+            yield Label(
+                "Profile = pick LỚP cụ thể. Hoặc bỏ trống profile + bấm "
+                "\"Chọn môn\" để pick MÔN (giống Đăng ký nhanh, thử các lớp).",
+                id="mb-mode-hint", markup=False,
+            )
             with Horizontal(id="mb-buttons"):
-                yield Button("+ Thêm account", id="add-acc", variant="primary")
+                yield Button("+ Thêm (profile)", id="add-acc", variant="primary")
+                yield Button("+ Thêm (chọn môn)", id="add-acc-subj", variant="primary")
                 yield Button("Xóa acc đã chọn", id="del-acc", variant="warning")
                 yield Button("Lưu file", id="save", variant="success")
                 yield Button("Hủy", id="cancel")
 
     def on_mount(self) -> None:
         table = self.query_one("#mb-table", DataTable)
-        table.add_columns("STT", "Username", "Profile")
+        table.add_columns("STT", "Username", "Chế độ", "Chi tiết")
         cols = list(table.columns.values())
-        widths = [5, 18, 30]
+        widths = [5, 18, 12, 30]
         for col, w in zip(cols, widths):
             col.auto_width = False
             col.width = w
@@ -1696,10 +1831,21 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
         table = self.query_one("#mb-table", DataTable)
         table.clear()
         for i, a in enumerate(self._accounts):
+            if a.get("subjects"):
+                mode = "chọn môn"
+                names = [s.get("name") or f"id={s.get('id')}" for s in a["subjects"]]
+                detail = f"{len(names)} môn: " + ", ".join(names)
+            elif a.get("profile"):
+                mode = "profile"
+                detail = a["profile"]
+            else:
+                mode = "profile"
+                detail = "(shared)"
             table.add_row(
                 str(i),
                 a["username"],
-                a.get("profile") or "(shared)",
+                mode,
+                detail[:60],
                 key=str(i),
             )
 
@@ -1768,12 +1914,54 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
             return
         self.dismiss(filename)
 
+    def _add_account_subject(self) -> None:
+        """Subject-mode: đọc user/pass, push SubjectPickerScreen (login →
+        tick môn), khi Xong lưu account với field 'subjects'."""
+        u = self.query_one("#mb-user", Input).value.strip()
+        p = self.query_one("#mb-pass", Input).value
+        if not u or not p:
+            self.notify(
+                "Nhập username + password trước khi bấm 'Chọn môn' (cần login).",
+                severity="warning",
+            )
+            return
+        if any(a["username"] == u for a in self._accounts):
+            self.notify(f"Username {u} đã có trong danh sách.", severity="warning")
+            return
+
+        def _on_picked(result: Optional[Dict[str, Any]]) -> None:
+            if not result or not result.get("subjects"):
+                return
+            acc: Dict[str, Any] = {
+                "username": u,
+                "password": p,
+                "subjects": result["subjects"],
+            }
+            if result.get("is_summer"):
+                acc["is_summer"] = True
+            self._accounts.append(acc)
+            # Clear input sau khi thêm thành công
+            self.query_one("#mb-user", Input).value = ""
+            self.query_one("#mb-pass", Input).value = ""
+            self._refresh_table()
+            self.notify(
+                f"Đã thêm {u} ({len(result['subjects'])} môn).",
+                severity="information",
+            )
+
+        self.app.push_screen(
+            SubjectPickerScreen(u, p, self.services),
+            _on_picked,
+        )
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
         if bid == "cancel":
             self.dismiss(None)
         elif bid == "add-acc":
             self._add_account()
+        elif bid == "add-acc-subj":
+            self._add_account_subject()
         elif bid == "del-acc":
             self._delete_selected_account()
         elif bid == "save":
@@ -2302,6 +2490,38 @@ class TLUApp(App):
         padding-top: 1;
     }
     #mb-buttons Button {
+        margin: 0 1;
+    }
+    #mb-mode-hint {
+        color: #a5adcb;
+        padding: 1 0 0 0;
+    }
+
+    /* Subject picker (multireg subject-mode) */
+    #subpick-container {
+        padding: 1 2;
+        width: 90%;
+        height: 90%;
+        background: #1e2030;
+        border: round #c6a0f6;
+    }
+    #subpick-title {
+        text-style: bold;
+        color: #c6a0f6;
+        text-align: center;
+        padding-bottom: 1;
+    }
+    #subpick-status {
+        color: #a5adcb;
+        padding: 1 0;
+    }
+    #subpick-selection {
+        height: 1fr;
+    }
+    #subpick-buttons {
+        padding-top: 1;
+    }
+    #subpick-buttons Button {
         margin: 0 1;
     }
 
