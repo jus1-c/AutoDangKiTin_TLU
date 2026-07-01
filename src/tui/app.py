@@ -3180,14 +3180,15 @@ class TLUApp(App):
     #builder-toolbar2 Button, #multireg-toolbar Button {
         margin: 0 1;
     }
-    /* Toggle + label trong toolbar hàng 1 — căn giữa dọc so với nút cao 3 */
+    /* Toggle + label trong toolbar hàng 1 — switch/label cao 1, nút cao 3.
+       align-vertical:middle không đẩy được vì nút đã lấp đầy container.
+       Dùng margin-top:1 đẩy switch+label xuống dòng giữa (y=2) khớp text nút. */
     #reg-toolbar Label, #builder-toolbar Label {
-        height: 3;
-        content-align-vertical: middle;
+        margin-top: 1;
         padding: 0 1 0 0;
     }
     #reg-toolbar ToggleSwitch, #builder-toolbar ToggleSwitch {
-        height: 3;
+        margin-top: 1;
     }
     #builder-save-row {
         height: auto;
