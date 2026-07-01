@@ -121,6 +121,11 @@ def login(
     Config.ensure_dirs()
 
     async def _run():
+        # nonlocal: nếu không có, Python coi `username = typer.prompt(...)`
+        # là gán biến local mới → dòng `if not username:` phía trên đọc
+        # local chưa gán → UnboundLocalError. Bug này khiến `autodktin login`
+        # luôn crash khi thiếu --user hoặc --password.
+        nonlocal username, password
         client = TLUClient()
         try:
             auth = AuthService(client)
@@ -171,15 +176,38 @@ def register(
                 if profile not in files:
                     console.print(f"[red]Không tìm thấy profile: {profile}[/red]")
                     raise typer.Exit(1)
-                with open(os.path.join(Config.RES_DIR, "custom", profile), "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                target_courses = [Course(d) for d in data]
-                console.print(f"[blue]Chạy profile[/blue] {profile} ({len(target_courses)} môn)")
-                failed = await register_svc.register_custom(user, target_courses)
+                profile_path = os.path.join(Config.RES_DIR, "custom", profile)
+                # load_profile xử lý cả v1 (list) và v2 (envelope {version,
+                # semester_id, courses}). Cũ dùng `[Course(d) for d in data]`
+                # với data là dict v2 → lặp qua KEYS → Course("version"). Sai.
+                try:
+                    sem_id, target_courses = CustomService.load_profile(profile_path)
+                except (json.JSONDecodeError, OSError) as e:
+                    console.print(f"[red]Đọc profile lỗi: {e}[/red]")
+                    raise typer.Exit(1)
+                # Xác định học kỳ từ profile. Ưu tiên semester_id trong file;
+                # nếu file v1 (không có) thì --summer từ command line.
+                if sem_id is not None:
+                    is_summer_profile = (sem_id == user.semester_summer_id)
+                    active_sem_id = sem_id
+                else:
+                    is_summer_profile = summer
+                    active_sem_id = user.semester_summer_id if summer else user.semester_id
+                hk_label = "HK hè" if is_summer_profile else "HK chính"
+                console.print(
+                    f"[blue]Chạy profile[/blue] {profile} "
+                    f"({len(target_courses)} môn, {hk_label}, semester_id={active_sem_id})"
+                )
+                failed = await register_svc.register_custom_for_semester(
+                    user, target_courses, semester_id=active_sem_id,
+                )
                 if failed and auto_sniff:
                     console.print(f"[yellow]{len(failed)} môn fail -> sniffing...[/yellow]")
                     await register_svc.sniffing_loop(
-                        user, failed, False, interval=interval, on_log=print
+                        user, failed, is_summer_profile,
+                        interval=interval,
+                        max_duration_min=Config.SNIFF_MAX_DURATION_MIN,
+                        on_log=print,
                     )
                 return
 
@@ -191,14 +219,31 @@ def register(
             if not sel:
                 console.print("[red]Cần --index/-i hoặc --all hoặc --profile[/red]")
                 raise typer.Exit(1)
+            # Filter index out-of-range TRƯỚC khi gọi register_subjects.
+            # register_subjects sẽ `all_courses[idx]` → IndexError nếu bad.
+            original_sel = sel
+            sel = [i for i in original_sel if 0 <= i < len(names)]
+            invalid = [i for i in original_sel if not (0 <= i < len(names))]
+            if invalid:
+                console.print(
+                    f"[yellow]Bỏ qua index không hợp lệ (ngoài 0..{len(names)-1}): "
+                    f"{invalid}[/yellow]"
+                )
+            if not sel:
+                console.print(
+                    f"[red]Không có index hợp lệ. Có {len(names)} môn (0..{len(names)-1}).[/red]"
+                )
+                raise typer.Exit(1)
             for i in sel:
-                if 0 <= i < len(names):
-                    console.print(f"  {i}. {names[i]}")
+                console.print(f"  {i}. {names[i]}")
             failed = await register_svc.register_subjects(user, sel, courses, summer)
             if failed and auto_sniff:
                 console.print(f"[yellow]{len(failed)} môn fail -> sniffing...[/yellow]")
                 await register_svc.sniffing_loop(
-                    user, failed, summer, interval=interval, on_log=print
+                    user, failed, summer,
+                    interval=interval,
+                    max_duration_min=Config.SNIFF_MAX_DURATION_MIN,
+                    on_log=print,
                 )
         finally:
             await client.close()
