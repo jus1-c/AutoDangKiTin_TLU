@@ -786,17 +786,24 @@ class RegisterScreen(Screen):
 
         # Build seed rows for the LogScreen status table. Key by the
         # subject_idx so the worker can look up rows by idx.
+        # Đồng thời build map id(course) → subj_key để sniff status update
+        # đúng row (M1: trước đây update dùng course_{id(course)} không khớp).
         status_rows: List[Dict[str, Any]] = []
+        course_to_key: Dict[int, str] = {}
         for idx in indices:
             group = self.courses[idx]
             if not group:
                 continue
             first = group[0]
+            key = f"subj_{idx}"
             status_rows.append({
-                "key": f"subj_{idx}",
+                "key": key,
                 "code": first.code or first.display_name,
                 "lich": first.sessions_summary or "—",
             })
+            # Map cho tất cả lớp trong môn — sniff có thể trả về lớp bất kỳ
+            for course in group:
+                course_to_key[id(course)] = key
         async def _work(ctx: LogCaptureContext):
             register: RegisterService = self.services["register"]
             is_summer = self._is_summer()
@@ -821,25 +828,32 @@ class RegisterScreen(Screen):
                 )
                 if failed and Config.AUTO_SNIFF_FALLBACK and not ctx.should_stop():
                     ctx.log(f"[AUTO] {len(failed)} môn fail -> chuyển sang sniffing.")
-                    # Mark failed rows as sniffing (best-effort key match)
+                    # M1 fix: dùng course_to_key thay vì course_{id(course)}
                     for course in failed:
-                        ctx.update_status(
-                            f"course_{id(course)}", STATUS_SNIFFING, "Đang săn slot..."
-                        )
+                        key = course_to_key.get(id(course))
+                        if key:
+                            ctx.update_status(key, STATUS_SNIFFING, "Đang săn slot...")
                     sniff_failed = await register.sniffing_loop(
                         self.user,
                         failed,
                         is_summer,
                         interval=Config.SNIFF_INTERVAL,
                         jitter=Config.SNIFF_JITTER,
+                        max_duration_min=Config.SNIFF_MAX_DURATION_MIN,
                         on_log=ctx.log,
                         should_stop=ctx.should_stop,
                     )
-                    # After sniff, mark any still-failed as DONE
-                    for course in (failed if not sniff_failed else sniff_failed):
-                        ctx.update_status(
-                            f"course_{id(course)}", STATUS_DONE, "Đã săn xong (vẫn fail)"
-                        )
+                    # M2 fix: logic ngược. Course thành công = không còn trong
+                    # sniff_failed. Course fail = còn trong sniff_failed.
+                    still_failed_ids = {id(c) for c in sniff_failed}
+                    for course in failed:
+                        key = course_to_key.get(id(course))
+                        if not key:
+                            continue
+                        if id(course) in still_failed_ids:
+                            ctx.update_status(key, STATUS_FAILED, "Vẫn fail sau săn")
+                        else:
+                            ctx.update_status(key, STATUS_SUCCESS, "Đã săn được!")
                 elif failed and not Config.AUTO_SNIFF_FALLBACK:
                     ctx.log(f"[INFO] {len(failed)} môn fail. Tự fallback đã TẮT trong Settings.")
             except Exception as e:  # noqa: BLE001
@@ -1432,13 +1446,25 @@ class ProfileScreen(Screen):
                         is_summer=is_summer,
                         interval=Config.SNIFF_INTERVAL,
                         jitter=Config.SNIFF_JITTER,
+                        max_duration_min=Config.SNIFF_MAX_DURATION_MIN,
                         on_log=ctx.log,
                         should_stop=ctx.should_stop,
                     )
-                    for course in (failed if not sniff_failed else sniff_failed):
-                        ctx.update_status(
-                            f"course_{id(course)}", STATUS_DONE, "Đã săn xong (vẫn fail)"
-                        )
+                    # M2 fix: course KHÔNG còn trong sniff_failed = săn được →
+                    # SUCCESS. Còn trong sniff_failed = vẫn fail → FAILED.
+                    # Trước đây ternary ngược: sniff xong hết vẫn báo "vẫn fail".
+                    still_failed_ids = {id(c) for c in sniff_failed}
+                    for course in failed:
+                        if id(course) in still_failed_ids:
+                            ctx.update_status(
+                                f"course_{id(course)}", STATUS_FAILED,
+                                "Săn xong vẫn fail",
+                            )
+                        else:
+                            ctx.update_status(
+                                f"course_{id(course)}", STATUS_SUCCESS,
+                                "Săn được slot!",
+                            )
                 elif failed and not Config.AUTO_SNIFF_FALLBACK:
                     ctx.log(f"[INFO] {len(failed)} môn fail. Tự fallback đã TẮT trong Settings.")
             except Exception as e:  # noqa: BLE001

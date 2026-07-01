@@ -1,7 +1,12 @@
 import json
 import os
 import datetime
+from datetime import timezone, timedelta
 import webbrowser
+
+# TLU dùng giờ VN (UTC+7). fromtimestamp() dùng TZ máy local — nếu máy
+# không phải UTC+7 sẽ sai cả ngày lẫn giờ. Dùng tz cố định.
+_TZ_VN = timezone(timedelta(hours=7))
 from ics import Calendar, Event
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -147,7 +152,11 @@ class CalendarService:
         return created_calendar['id']
 
     def _week_index_convert(self, x):
-        if x == 8: return 6
+        # weekIndex: 1=CN (theo course.py:183), 2=T2, 3=T3, ..., 7=T7, 8=CN.
+        # Cả 1 và 8 đều là Chủ Nhật (day_offset=6 vì tuần bắt đầu Thứ 2).
+        # Trước fix chỉ xử lý x=8, x=1 trả -1 → event lệch 1 ngày về TRƯỚC.
+        if x in (1, 8):
+            return 6
         return x - 2
 
     def _parse_schedule(self, schedule_data):
@@ -170,9 +179,17 @@ class CalendarService:
                 current_date = start_date_ts
                 while current_date < end_date_ts:
                     event_date = current_date + (day_offset * 86400)
-                    dt_object = datetime.datetime.fromtimestamp(event_date)
+                    # Off-by-one: check event_date, không phải current_date
+                    # (current_date là mốc TUẦN, event_date là ngày thực tế
+                    # sau khi cộng day_offset — có thể vượt end_date_ts).
+                    if event_date > end_date_ts:
+                        break
+                    # Dùng tz VN cố định thay vì TZ máy local — nếu máy
+                    # không phải UTC+7 sẽ sai cả ngày lẫn giờ khi hardcode
+                    # "+07:00" phía sau.
+                    dt_object = datetime.datetime.fromtimestamp(event_date, tz=_TZ_VN)
                     date_str = dt_object.strftime('%Y-%m-%d')
-                    
+
                     start_dt = f"{date_str}T{start_time_str}:00+07:00"
                     end_dt = f"{date_str}T{end_time_str}:00+07:00"
                     
