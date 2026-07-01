@@ -58,6 +58,14 @@ class User:
         sid = semester_id if semester_id is not None else self.semester_id
         return f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/add-register/{self.student_id}/{sid}"
 
+    def unregister_url(self, semester_id: Optional[int] = None) -> str:
+        """remove-register (DELETE) endpoint — hủy/drop lớp đã đăng ký.
+        semester_id ở đây đóng vai periodId (giống register_url). Payload
+        là course object đầy đủ (giống add-register).
+        """
+        sid = semester_id if semester_id is not None else self.semester_id
+        return f"https://sinhvien1.tlu.edu.vn:443/education/api/cs_reg_mongo/remove-register/{self.student_id}/{sid}"
+
     @property
     def schedule_url(self) -> str:
         # Sử dụng semester_root_id theo đúng quan sát mới nhất

@@ -146,6 +146,152 @@ class RegisterService:
             failed_list.append(courses[0])
         return False
 
+    # ---------- Class transfer API layer (Feature 2) ----------
+
+    async def drop_class(
+        self, user: User, period_id: int, course_data: dict,
+        timeout: Optional[float] = None,
+    ) -> tuple:
+        """Hủy/drop 1 lớp đã đăng ký. DELETE remove-register.
+
+        Trả (success, status):
+        - success=True nếu server trả status=0 (hoặc -8 message nhưng
+          thực tế đã drop — theo controller, -8 là lỗi có message).
+        - success=False + status khác nếu fail.
+        - status=None nếu network/timeout/non-JSON.
+
+        KHÔNG retry vô hạn như burst — drop là thao tác 1 lần, caller
+        (transfer engine) tự quyết định retry.
+        """
+        url = user.unregister_url(period_id)
+        to = timeout if timeout is not None else float(
+            getattr(Config, "BURST_REQUEST_TIMEOUT", 10.0)
+        )
+        try:
+            response = await self.client.request(
+                "DELETE", url, json=course_data, timeout=to
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"[DROP] network/timeout error: {type(e).__name__}: {e}")
+            return False, None
+        status_http = getattr(response, "status_code", "?")
+        try:
+            res_json = response.json()
+        except Exception:  # noqa: BLE001
+            body = (getattr(response, "text", "") or "")[:200]
+            print(f"[DROP] HTTP {status_http} non-JSON: {body!r}")
+            return False, None
+        json_status = res_json.get("status")
+        if json_status == 0:
+            return True, 0
+        msg = res_json.get("message") or res_json.get("error") or ""
+        print(f"[DROP] từ chối (status={json_status}, msg={msg[:120]!r})")
+        return False, json_status
+
+    async def _fetch_period_view(self, user: User, period_id: int) -> Optional[dict]:
+        """GET findByPeriod → trả courseRegisterViewObject (dict) hoặc None."""
+        url = user.course_url(period_id)
+        try:
+            response = await self.client.request("GET", url)
+        except Exception as e:  # noqa: BLE001
+            print(f"[TRANSFER] findByPeriod({period_id}) network error: {e}")
+            return None
+        if getattr(response, "status_code", 0) != 200:
+            return None
+        try:
+            data = response.json()
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(data, dict):
+            return None
+        return data.get("courseRegisterViewObject") or None
+
+    async def get_active_periods(self, user: User) -> List[Dict[str, Any]]:
+        """Trả các period đang MỞ đăng ký HOẶC mở hủy, check cả HK chính
+        + HK hè (không cần switch — cái nào đang trong thời gian thì lấy).
+
+        Mỗi phần tử: {
+          "period_id": int,      # = semester_id dùng cho URL
+          "is_summer": bool,
+          "allow_register": bool,
+          "allow_unregister": bool,
+          "view": dict,          # courseRegisterViewObject đầy đủ
+        }
+        """
+        out: List[Dict[str, Any]] = []
+        candidates = [
+            (user.semester_id, False),
+            (user.semester_summer_id, True),
+        ]
+        seen_ids: set = set()
+        for pid, is_summer in candidates:
+            if pid is None or pid in seen_ids:
+                continue
+            seen_ids.add(pid)
+            view = await self._fetch_period_view(user, pid)
+            if not view:
+                continue
+            allow_reg = bool(view.get("allowRegister"))
+            allow_unreg = bool(view.get("isAllowUnRegister"))
+            if allow_reg or allow_unreg:
+                out.append({
+                    "period_id": pid,
+                    "is_summer": is_summer,
+                    "allow_register": allow_reg,
+                    "allow_unregister": allow_unreg,
+                    "view": view,
+                })
+        return out
+
+    @staticmethod
+    def _iter_courses_in_view(view: dict):
+        """Yield (subject_dict, course_data_dict) cho mọi lớp trong 1
+        courseRegisterViewObject. Đi cả courseSubjectDtos + subCourseSubjects
+        (mirror CourseService._parse_courses)."""
+        subjects = view.get("listSubjectRegistrationDtos", []) or []
+        for subject in subjects:
+            dtos = subject.get("courseSubjectDtos", []) or []
+            for dto in dtos:
+                if not dto:
+                    continue
+                subs = dto.get("subCourseSubjects")
+                if subs:
+                    for sub in subs:
+                        if sub:
+                            yield subject, sub
+                else:
+                    yield subject, dto
+
+    def get_enrolled_courses(self, view: dict) -> List[Course]:
+        """Parse lớp ĐÃ đăng ký (isSelected==true) từ courseRegisterViewObject."""
+        enrolled: List[Course] = []
+        seen_codes: set = set()
+        for _subject, cdata in self._iter_courses_in_view(view):
+            if not cdata.get("isSelected"):
+                continue
+            code = cdata.get("code")
+            if code in seen_codes:
+                continue
+            seen_codes.add(code)
+            enrolled.append(Course(data=cdata))
+        return enrolled
+
+    def get_eligible_subject_ids(self, view: dict) -> set:
+        """Set các subjectId mà account đủ điều kiện đăng ký trong period
+        này (dùng cho cross-check grey-out lúc transfer)."""
+        ids: set = set()
+        subjects = view.get("listSubjectRegistrationDtos", []) or []
+        for subject in subjects:
+            sid = subject.get("id")
+            if sid is not None:
+                ids.add(int(sid))
+            # course-level subjectId cũng gom (phòng khi subject.id khác)
+            dtos = subject.get("courseSubjectDtos", []) or []
+            for dto in dtos:
+                if dto and dto.get("subjectId") is not None:
+                    ids.add(int(dto["subjectId"]))
+        return ids
+
     def _get_semaphore(self) -> asyncio.Semaphore:
         """Rebuild semaphore if Config.CONCURRENCY_LIMIT changed at runtime."""
         if self._semaphore_limit != Config.CONCURRENCY_LIMIT:
