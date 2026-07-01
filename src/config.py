@@ -73,11 +73,17 @@ class Config:
     LOGIN_FILE = os.path.join(RES_DIR, "login.json")
     GOOGLE_TOKEN_FILE = os.path.join(RES_DIR, "token_google.json")
     SETTINGS_FILE = os.path.join(RES_DIR, "settings.json")
+    # Multi-account register: file định nghĩa (res/multireg/*.json) + log
+    # chạy theo từng account (res/logs/{username}_{ts}.log).
+    MULTIREG_DIR = os.path.join(RES_DIR, "multireg")
+    LOGS_DIR = os.path.join(RES_DIR, "logs")
 
     @classmethod
     def ensure_dirs(cls):
         os.makedirs(cls.RES_DIR, exist_ok=True)
         os.makedirs(os.path.join(cls.RES_DIR, "custom"), exist_ok=True)
+        os.makedirs(cls.MULTIREG_DIR, exist_ok=True)
+        os.makedirs(cls.LOGS_DIR, exist_ok=True)
 
     @classmethod
     def load_settings(cls):
