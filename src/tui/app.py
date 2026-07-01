@@ -44,6 +44,7 @@ from textual.widgets import (
     Input,
     Label,
     RichLog,
+    Rule,
     Select,
     SelectionList,
     Static,
@@ -206,8 +207,9 @@ class LogScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(id="log-container"):
-            yield Label(self.title_text, id="log-title")
+        container = Container(id="log-container")
+        container.border_title = self.title_text
+        with container:
             yield DataTable(
                 id="status-table",
                 zebra_stripes=True,
@@ -376,27 +378,26 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
         self._retrying = False
 
     def compose(self) -> ComposeResult:
-        with Container(id="login-container"):
-            yield Label("ĐĂNG NHẬP", id="login-title")
-            yield Label("Mã sinh viên:")
+        container = Container(id="login-container")
+        container.border_title = "ĐĂNG NHẬP"
+        with container:
+            yield Label("Mã sinh viên:", classes="login-field-label")
             yield Input(value=self._default_user, id="username", placeholder="Mã sinh viên")
-            yield Label("Mật khẩu:")
+            yield Label("Mật khẩu:", classes="login-field-label")
             yield Input(
                 value=self._default_password,
                 password=True,
                 id="password",
                 placeholder="Mật khẩu",
             )
-            yield Label("Tùy chọn:", id="login-options-title")
+            yield Rule(line_style="dashed")
             with Vertical(id="login-options"):
                 with Horizontal(id="save-login-row", classes="opt-row"):
                     yield ToggleSwitch(value=self._default_save, id="save-login")
                     yield Label("Lưu đăng nhập")
-                yield Static("", classes="opt-spacer")
                 with Horizontal(id="offline-mode-row", classes="opt-row"):
                     yield ToggleSwitch(value=False, id="offline-mode")
                     yield Label("Offline (dùng cache)")
-                yield Static("", classes="opt-spacer")
                 with Horizontal(id="continuous-login-row", classes="opt-row"):
                     yield ToggleSwitch(value=False, id="continuous-login")
                     yield Label("Bắn login liên tục đến khi có token")
@@ -756,12 +757,14 @@ class RegisterScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container():
-            yield Label("ĐĂNG KÝ NHANH", id="reg-title")
+        container = Container(id="reg-container")
+        container.border_title = "ĐĂNG KÝ NHANH"
+        with container:
             with Horizontal(id="reg-toolbar"):
                 yield ToggleSwitch(id="summer", value=False)
                 yield Label("Học kỳ hè")
                 yield Button("Tải danh sách môn", id="load", variant="primary")
+            with Horizontal(id="reg-toolbar2"):
                 yield Button("Chọn tất cả", id="select-all")
                 yield Button("Bỏ chọn", id="deselect-all")
                 yield Button("Đăng ký môn đã chọn", id="run", variant="success")
@@ -936,8 +939,9 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
         self._populated = False
 
     def compose(self) -> ComposeResult:
-        with Container(id="picker-container"):
-            yield Label(f"Chọn lớp cho: {self.subject_name}", id="picker-title")
+        container = Container(id="picker-container")
+        container.border_title = f"Chọn lớp: {self.subject_name}"
+        with container:
             yield DataTable(id="picker-table", zebra_stripes=True, cursor_type="row")
             with Horizontal(id="picker-buttons"):
                 yield Button("Chọn lớp đang trỏ (Enter)", id="pick-btn", variant="primary")
@@ -1322,9 +1326,10 @@ class ProfileScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container():
-            yield Label("ĐĂNG KÝ THEO PROFILE", id="profile-title")
-            with Horizontal():
+        container = Container(id="profile-container")
+        container.border_title = "ĐĂNG KÝ THEO PROFILE"
+        with container:
+            with Horizontal(id="profile-toolbar"):
                 yield Button("Làm mới", id="refresh")
                 yield Button("Đăng ký file đã chọn", id="run", variant="success")
                 yield Button("Xóa file đã chọn", id="delete", variant="error")
@@ -2567,9 +2572,14 @@ class CalendarScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container():
-            yield Label("LỊCH", id="cal-title")
-            with Horizontal():
+        container = Container(id="cal-container")
+        container.border_title = "LỊCH"
+        with container:
+            yield Label(
+                "Xuất thời khóa biểu ra file ICS hoặc đồng bộ lên Google Calendar.",
+                id="cal-hint", markup=False,
+            )
+            with Horizontal(id="cal-toolbar"):
                 yield Button("Xuất ICS", id="ics", variant="primary")
                 yield Button("Đồng bộ Google Calendar", id="google", variant="success")
                 yield Button("Quay lại", id="back")
@@ -2642,20 +2652,21 @@ class SettingsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(id="settings-container"):
-            yield Label("SETTINGS", id="set-title")
+        container = Container(id="settings-container")
+        container.border_title = "SETTINGS"
+        with container:
+            yield Label("Đăng ký", classes="set-section")
             with Horizontal(id="row-auto-sniff", classes="settings-row"):
                 yield ToggleSwitch(value=Config.AUTO_SNIFF_FALLBACK, id="auto-sniff")
                 yield Label("Tự fallback sang sniffing khi đăng ký fail")
-            with Horizontal(id="row-debug", classes="settings-row"):
-                yield ToggleSwitch(value=Config.DEBUG, id="debug")
-                yield Label("Chế độ Debug")
             with Horizontal(id="row-burst", classes="settings-row"):
                 yield Label("Số request song song / lần thử (BURST):")
                 yield Input(value=str(Config.BURST_COUNT), id="burst")
             with Horizontal(id="row-concurrency", classes="settings-row"):
                 yield Label("Giới hạn đồng thời (CONCURRENCY):")
                 yield Input(value=str(Config.CONCURRENCY_LIMIT), id="concurrency")
+            yield Rule()
+            yield Label("Sniff", classes="set-section")
             with Horizontal(id="row-interval", classes="settings-row"):
                 yield Label("Interval sniff (giây):")
                 yield Input(value=str(Config.SNIFF_INTERVAL), id="interval")
@@ -2665,12 +2676,19 @@ class SettingsScreen(Screen):
             with Horizontal(id="row-max-duration", classes="settings-row"):
                 yield Label("Giới hạn thời gian sniff (phút, 0 = vô hạn):")
                 yield Input(value=str(Config.SNIFF_MAX_DURATION_MIN), id="max_duration")
+            yield Rule()
+            yield Label("Lịch", classes="set-section")
             with Horizontal(id="row-schedule-enabled", classes="settings-row"):
                 yield ToggleSwitch(value=Config.SCHEDULE_ENABLED, id="schedule-enabled")
                 yield Label("Bật hẹn giờ (đếm ngược tới lúc mở đăng kí)")
             with Horizontal(id="row-schedule-lead", classes="settings-row"):
                 yield Label("Lead time (giây trước khi auto-launch):")
                 yield Input(value=str(Config.SCHEDULE_LEAD_SECONDS), id="schedule-lead")
+            yield Rule()
+            yield Label("Debug", classes="set-section")
+            with Horizontal(id="row-debug", classes="settings-row"):
+                yield ToggleSwitch(value=Config.DEBUG, id="debug")
+                yield Label("Chế độ Debug")
             with Horizontal(id="settings-buttons"):
                 yield Button("Lưu", id="save", variant="primary")
                 yield Button("Đăng xuất", id="logout", variant="error")
@@ -2771,9 +2789,35 @@ class SettingsScreen(Screen):
 
 class TLUApp(App):
     CSS = """
-    /* Catppuccin Macchiato palette */
+    /* Catppuccin Macchiato palette.
+       Spacing scale: sm=1 md=2. Colors:
+       bg-base #24273a | bg-panel #1e2030 | bg-inset #181926
+       border #363a4f | focus/accent #c6a0f6
+       text #cad3f5 | dim #a5adcb | ok #a6da95 | warn #f5a97f | err #ed8796 */
     Screen {
         background: #24273a;
+    }
+
+    /* Panel border-title (thay Label title cũ) — accent mauve, đậm. */
+    Container {
+        border-title-color: #c6a0f6;
+        border-title-style: bold;
+        border-title-align: center;
+    }
+
+    /* Section label trong Settings (phân nhóm sau Rule). */
+    .set-section {
+        color: #c6a0f6;
+        text-style: bold;
+        padding: 1 0 0 0;
+    }
+    #cal-hint {
+        color: #a5adcb;
+        padding: 0 0 1 0;
+    }
+    Rule {
+        color: #363a4f;
+        margin: 0;
     }
 
     /* Rows that contain a ToggleSwitch + Label */
@@ -3097,11 +3141,11 @@ class TLUApp(App):
         background: #1e2030;
         border: round #5b6078;
     }
-    #reg-toolbar, #builder-toolbar {
+    #reg-toolbar, #reg-toolbar2, #builder-toolbar {
         height: auto;
         padding: 0 1;
     }
-    #reg-toolbar Button, #builder-toolbar Button {
+    #reg-toolbar Button, #reg-toolbar2 Button, #builder-toolbar Button {
         margin: 0 1;
     }
     #builder-save-row {
