@@ -6,7 +6,8 @@ Chạy đăng ký cho N account song song từ 1 file định nghĩa
 - 1 TLUClient riêng (mỗi account 1 session độc lập)
 - login qua login_until_success (retry vô hạn khi mạng lỗi)
 - load profile (custom hoặc shared) → register_custom_for_semester
-- fail + quick=True → sniffing_loop
+- fail + Config.AUTO_SNIFF_FALLBACK bật → sniffing_loop (giống menu
+  "1. Đăng ký nhanh": pick + register, sniff fallback là mặc định global)
 
 Log tách theo account vào res/logs/{username}_{ts}.log.
 
@@ -19,15 +20,14 @@ File format (v1):
     {
       "username": "sv001",
       "password": "...",
-      "profile": null | "custom_y.json",
-      "is_summer": false,
-      "quick": true
+      "profile": null | "custom_y.json"
     }
   ]
 }
 
-profile=null → dùng shared_profile. quick=true → nếu register fail,
-auto sniff cho tới khi được (hoặc SNIFF_MAX_DURATION_MIN hết giờ).
+profile=null → dùng shared_profile. HK chính/hè lấy từ semester_id đã
+lưu trong profile v2 (is_summer chỉ là fallback cho profile v1 legacy).
+Sniff fallback khi lớp đầy = hành vi mặc định (Config.AUTO_SNIFF_FALLBACK).
 """
 from __future__ import annotations
 
@@ -58,8 +58,7 @@ class MultiRegAccount:
     username: str
     password: str
     profile: Optional[str] = None  # None → dùng shared_profile
-    is_summer: bool = False
-    quick: bool = True  # True: fallback sniff nếu fail
+    is_summer: bool = False  # fallback cho profile v1 (không có sem_id)
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "MultiRegAccount":
@@ -69,12 +68,13 @@ class MultiRegAccount:
             raise ValueError(
                 f"Account thiếu username/password: {d}"
             )
+        # Bỏ qua key "quick" cũ nếu file legacy có — sniff fallback giờ là
+        # global setting (Config.AUTO_SNIFF_FALLBACK), không còn per-account.
         return cls(
             username=str(u).strip(),
             password=str(p),
             profile=d.get("profile") or None,
             is_summer=bool(d.get("is_summer", False)),
-            quick=bool(d.get("quick", True)),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -83,7 +83,6 @@ class MultiRegAccount:
             "password": self.password,
             "profile": self.profile,
             "is_summer": self.is_summer,
-            "quick": self.quick,
         }
 
 
@@ -264,7 +263,7 @@ class MultiRegService:
         }
 
         _emit("start", f"Bắt đầu (profile={cfg.resolve_profile(acc)}, "
-                       f"is_summer={acc.is_summer}, quick={acc.quick})")
+                       f"is_summer={acc.is_summer})")
 
         # Load profile trước khi login (fail sớm nếu profile thiếu)
         profile_name = cfg.resolve_profile(acc)
@@ -337,9 +336,11 @@ class MultiRegService:
             _emit("register", f"Register xong: OK {result['registered']}/{len(courses)}, "
                               f"fail {len(failed)}")
 
-            # Quick mode: sniff các lớp fail (chỉ status=-6 mới vào failed_list)
-            if failed and acc.quick:
-                _emit("sniff", f"Sniff {len(failed)} lớp fail (quick=True)")
+            # Sniff fallback khi lớp đầy — hành vi MẶC ĐỊNH global giống
+            # menu "1. Đăng ký nhanh" (Config.AUTO_SNIFF_FALLBACK). Chỉ
+            # status=-6 (lớp đầy) mới vào failed_list để sniff.
+            if failed and Config.AUTO_SNIFF_FALLBACK:
+                _emit("sniff", f"Sniff {len(failed)} lớp fail (AUTO_SNIFF_FALLBACK)")
                 is_summer_for_sniff = (
                     active_sem_id == user.semester_summer_id
                 )

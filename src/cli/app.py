@@ -456,11 +456,17 @@ def multireg_create(
     ),
     account: List[str] = typer.Option(
         [], "--account", "-a",
-        help="username:password[:profile[:summer[:quick]]] — lặp lại được. "
-             "summer=summer|main, quick=quick|noquick. VD: sv001:pass:file.json:main:quick",
+        help="username:password[:profile[:summer]] — lặp lại được. "
+             "summer=summer|main (HK thường lấy từ profile). "
+             "VD: sv001:pass:file.json  hoặc  sv002:pass::summer",
     ),
 ):
-    """Tạo file multireg từ CLI (wizard prompt hoặc --account nhiều lần)."""
+    """Tạo file multireg từ CLI (wizard prompt hoặc --account nhiều lần).
+
+    HK chính/hè lấy từ semester_id trong profile (v2). Sniff fallback khi
+    lớp đầy là hành vi mặc định (Config.AUTO_SNIFF_FALLBACK) — giống menu
+    "1. Đăng ký nhanh" của TUI. is_summer chỉ là fallback cho profile v1 cũ.
+    """
     Config.ensure_dirs()
     svc = MultiRegService()
     accounts: List[dict] = []
@@ -469,15 +475,13 @@ def multireg_create(
     for spec in account:
         parts = spec.split(":")
         if len(parts) < 2:
-            console.print(f"[red]--account cần format username:password[:profile[:summer[:quick]]]: {spec}[/red]")
+            console.print(f"[red]--account cần format username:password[:profile[:summer]]: {spec}[/red]")
             raise typer.Exit(1)
         acc: dict = {"username": parts[0], "password": parts[1]}
         if len(parts) > 2 and parts[2]:
             acc["profile"] = parts[2]
         if len(parts) > 3:
             acc["is_summer"] = parts[3].lower() in ("summer", "he", "hè", "true", "1")
-        if len(parts) > 4:
-            acc["quick"] = parts[4].lower() in ("quick", "true", "1")
         accounts.append(acc)
 
     # Nếu không có flag → interactive wizard
@@ -489,9 +493,7 @@ def multireg_create(
                 break
             p = typer.prompt("Password", hide_input=True)
             prof = typer.prompt("Profile file (Enter=dùng shared)", default="", show_default=False)
-            is_summer = typer.confirm("Học kỳ hè?", default=False)
-            quick = typer.confirm("Đăng ký nhanh (burst+sniff nếu fail)?", default=True)
-            acc = {"username": u, "password": p, "is_summer": is_summer, "quick": quick}
+            acc = {"username": u, "password": p}
             if prof:
                 acc["profile"] = prof
             accounts.append(acc)
