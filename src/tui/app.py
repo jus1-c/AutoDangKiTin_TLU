@@ -44,6 +44,7 @@ from textual.widgets import (
     Input,
     Label,
     RichLog,
+    Select,
     SelectionList,
     Static,
 )
@@ -1624,6 +1625,21 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
         self._accounts: List[Dict[str, Any]] = []
 
     def compose(self) -> ComposeResult:
+        profiles = self.custom_svc.list_files()
+        # Combobox options: (label, value). Value=None → "(dùng shared)".
+        # Nếu chưa có profile nào thì Select vẫn cần ít nhất 1 option
+        # → thêm option placeholder "—" giá trị "" để form không crash.
+        profile_options: List[tuple] = [("(dùng shared)", "")]
+        for f in profiles:
+            profile_options.append((f, f))
+        shared_options: List[tuple] = [("(không dùng shared)", "")]
+        for f in profiles:
+            shared_options.append((f, f))
+
+        # Reactive state cho HK + Quick — bind vào button label trong _refresh_toggles.
+        self._is_summer = False
+        self._quick = True
+
         with Container(id="multireg-builder-container"):
             yield Label("TẠO FILE MULTIREG MỚI", id="multireg-builder-title")
             with Horizontal(classes="mb-row"):
@@ -1631,16 +1647,15 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
                 yield Input(placeholder="vd: dot1_thang7", id="mb-name")
             with Horizontal(classes="mb-row"):
                 yield Label("Shared profile:", classes="mb-lbl")
-                yield Input(
-                    placeholder="tên file (Enter để bỏ trống)",
+                yield Select(
+                    shared_options, allow_blank=False, value="",
                     id="mb-shared",
                 )
-            profiles = self.custom_svc.list_files()
-            hint = (
-                f"Custom profile có sẵn: {', '.join(profiles)}"
-                if profiles else "Chưa có custom profile nào — mỗi account phải có profile riêng."
-            )
-            yield Label(hint, id="mb-hint", markup=False)
+            if not profiles:
+                yield Label(
+                    "⚠ Chưa có custom profile nào. Tạo trước ở menu \"2. Tạo danh sách custom\".",
+                    id="mb-hint", markup=False,
+                )
 
             yield Label("Danh sách account đã thêm:", id="mb-list-title")
             yield DataTable(
@@ -1655,14 +1670,23 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
                 yield Input(placeholder="mật khẩu", password=True, id="mb-pass")
             with Horizontal(classes="mb-row"):
                 yield Label("Profile:", classes="mb-lbl-narrow")
-                yield Input(
-                    placeholder="rỗng = dùng shared",
+                yield Select(
+                    profile_options, allow_blank=False, value="",
                     id="mb-profile",
                 )
-                yield ToggleSwitch(id="mb-summer", value=False)
-                yield Label("HK hè", classes="mb-lbl-narrow")
-                yield ToggleSwitch(id="mb-quick", value=True)
-                yield Label("Nhanh", classes="mb-lbl-narrow")
+                # 2 nút thay 2 switch — bấm để toggle, label hiển thị rõ.
+                # Trỏ về đăng ký nhanh: giá trị đúng khi chạy CLI = luồng
+                # register_custom_for_semester + sniff (giống Đăng ký nhanh).
+                yield Button(
+                    "HK: chính",
+                    id="mb-btn-summer",
+                    variant="default",
+                )
+                yield Button(
+                    "Đăng ký nhanh: BẬT",
+                    id="mb-btn-quick",
+                    variant="success",
+                )
             with Horizontal(id="mb-buttons"):
                 yield Button("+ Thêm account", id="add-acc", variant="primary")
                 yield Button("Xóa acc đã chọn", id="del-acc", variant="warning")
@@ -1692,12 +1716,29 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
                 key=str(i),
             )
 
+    def _toggle_summer(self) -> None:
+        """Toggle HK button — trỏ về khái niệm HK chính/hè của Đăng ký nhanh."""
+        self._is_summer = not self._is_summer
+        btn = self.query_one("#mb-btn-summer", Button)
+        btn.label = "HK: hè" if self._is_summer else "HK: chính"
+        btn.variant = "warning" if self._is_summer else "default"
+
+    def _toggle_quick(self) -> None:
+        """Toggle Đăng ký nhanh button — quick=True nghĩa là burst+sniff-fallback
+        như menu \"1. Đăng ký nhanh\". quick=False → chỉ register 1 lần, không sniff."""
+        self._quick = not self._quick
+        btn = self.query_one("#mb-btn-quick", Button)
+        btn.label = "Đăng ký nhanh: BẬT" if self._quick else "Đăng ký nhanh: TẮT"
+        btn.variant = "success" if self._quick else "default"
+
     def _add_account(self) -> None:
         u = self.query_one("#mb-user", Input).value.strip()
         p = self.query_one("#mb-pass", Input).value
-        prof = self.query_one("#mb-profile", Input).value.strip()
-        is_summer = self.query_one("#mb-summer", ToggleSwitch).value
-        quick = self.query_one("#mb-quick", ToggleSwitch).value
+        # Select value = "" khi user chọn "(dùng shared)".
+        prof_raw = self.query_one("#mb-profile", Select).value
+        prof = str(prof_raw).strip() if prof_raw else ""
+        is_summer = self._is_summer
+        quick = self._quick
         if not u or not p:
             self.notify("Thiếu username hoặc password.", severity="warning")
             return
@@ -1712,10 +1753,18 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
         if prof:
             acc["profile"] = prof
         self._accounts.append(acc)
-        # Clear inputs
+        # Clear inputs (Select giữ nguyên, HK/quick reset về default)
         self.query_one("#mb-user", Input).value = ""
         self.query_one("#mb-pass", Input).value = ""
-        self.query_one("#mb-profile", Input).value = ""
+        try:
+            self.query_one("#mb-profile", Select).value = ""
+        except Exception:  # noqa: BLE001
+            pass
+        # Reset HK về chính, quick về BẬT (default cho account tiếp theo)
+        if self._is_summer:
+            self._toggle_summer()
+        if not self._quick:
+            self._toggle_quick()
         self._refresh_table()
 
     def _delete_selected_account(self) -> None:
@@ -1731,7 +1780,8 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
 
     def _save(self) -> None:
         name = self.query_one("#mb-name", Input).value.strip()
-        shared = self.query_one("#mb-shared", Input).value.strip() or None
+        shared_raw = self.query_one("#mb-shared", Select).value
+        shared = (str(shared_raw).strip() or None) if shared_raw else None
         if not name:
             self.notify("Thiếu tên đợt.", severity="warning")
             return
@@ -1756,6 +1806,23 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
             return
         self.dismiss(filename)
 
+    def _refresh_toggles(self) -> None:
+        """Cập nhật label + variant của 2 nút toggle HK/quick."""
+        btn_summer = self.query_one("#mb-btn-summer", Button)
+        btn_quick = self.query_one("#mb-btn-quick", Button)
+        if self._is_summer:
+            btn_summer.label = "HK: hè"
+            btn_summer.variant = "warning"
+        else:
+            btn_summer.label = "HK: chính"
+            btn_summer.variant = "default"
+        if self._quick:
+            btn_quick.label = "Đăng ký nhanh: BẬT"
+            btn_quick.variant = "success"
+        else:
+            btn_quick.label = "Đăng ký nhanh: TẮT"
+            btn_quick.variant = "default"
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
         if bid == "cancel":
@@ -1764,6 +1831,12 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
             self._add_account()
         elif bid == "del-acc":
             self._delete_selected_account()
+        elif bid == "mb-btn-summer":
+            self._is_summer = not self._is_summer
+            self._refresh_toggles()
+        elif bid == "mb-btn-quick":
+            self._quick = not self._quick
+            self._refresh_toggles()
         elif bid == "save":
             self._save()
 
