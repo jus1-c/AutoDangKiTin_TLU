@@ -1554,10 +1554,11 @@ class MultiRegListScreen(Screen):
         container.border_title = "MULTI-ACCOUNT REGISTER"
         with container:
             yield Label(
-                "TUI chỉ tạo file. Chạy bằng: autodktin multireg run <file>",
+                "Chọn file rồi bấm Chạy (hoặc dùng CLI: autodktin multireg run <file>).",
                 id="multireg-hint", markup=False,
             )
             with Horizontal(id="multireg-toolbar"):
+                yield Button("Chạy file đã chọn", id="run", variant="success")
                 yield Button("Tạo file mới", id="new", variant="primary")
                 yield Button("Làm mới", id="refresh")
                 yield Button("Xóa file đã chọn", id="delete", variant="error")
@@ -1603,6 +1604,30 @@ class MultiRegListScreen(Screen):
             )
         elif bid == "delete":
             self._delete_selected()
+        elif bid == "run":
+            self._run_selected()
+
+    def _run_selected(self) -> None:
+        """Load file đã chọn → mở MultiRegRunScreen chạy trong TUI."""
+        table = self.query_one("#multireg-table", DataTable)
+        if table.cursor_row is None or table.cursor_row < 0:
+            self.notify("Chưa chọn file để chạy.", severity="warning")
+            return
+        files = self.svc.list_files()
+        if table.cursor_row >= len(files):
+            return
+        key = files[table.cursor_row]
+        try:
+            cfg = self.svc.load(key)
+        except Exception as e:  # noqa: BLE001
+            self.notify(f"Đọc file lỗi: {e}", severity="error")
+            return
+        if not cfg.accounts:
+            self.notify("File không có account nào.", severity="warning")
+            return
+        self.app.push_screen(
+            MultiRegRunScreen(cfg, key, self.services)
+        )
 
     def _on_builder_done(self, result: Optional[str]) -> None:
         """Callback khi builder scren dismiss. result = filename hoặc None."""
@@ -1624,6 +1649,207 @@ class MultiRegListScreen(Screen):
         self.notify(f"Đã xóa {key}", severity="information")
 
     def action_back(self) -> None:
+        self.app.pop_screen()
+
+
+class MultiRegRunScreen(Screen):
+    """Chạy 1 file multireg TRONG TUI (song song N account).
+
+    Layout:
+      - DataTable (trên): mỗi account 1 row — STT | MSV | Trạng thái | Kết quả.
+        Trạng thái cập nhật realtime từ on_progress; Kết quả điền khi xong.
+      - RichLog (giữa): capture stdout của service (mọi print `[user] ...`).
+      - Hàng nút (dưới): Dừng (set stop, ở lại) / Quay lại (set stop + pop).
+
+    Cả 2 nút set stop_event → truyền should_stop vào svc.run → cắt sniffing.
+    """
+
+    BINDINGS = [
+        Binding("escape", "back", "Quay lại"),
+        Binding("ctrl+c", "stop", "Dừng", show=True),
+    ]
+
+    # Map event_type từ on_progress → STATUS_* tuple cho cột Trạng thái.
+    _EV_STATUS = {
+        "start": STATUS_PENDING,
+        "login": ("🔑", "#8aadf4", "Đang login"),
+        "register": STATUS_SENDING,
+        "sniff": STATUS_SNIFFING,
+        "done": STATUS_SUCCESS,
+        "error": STATUS_FAILED,
+        "stopped": ("⏹", "#a5adcb", "Đã dừng"),
+    }
+
+    def __init__(self, cfg: MultiRegConfig, filename: str, services: dict):
+        super().__init__()
+        self.cfg = cfg
+        self.filename = filename
+        self.services = services
+        self.svc = MultiRegService()
+        self.stop_event = asyncio.Event()
+        self.worker_handle = None
+        # username → row_key (str) trong DataTable
+        self._row_keys: Dict[str, str] = {}
+        self._done = False
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        container = Container(id="mrun-container")
+        container.border_title = f"CHẠY MULTIREG: {self.cfg.name or self.filename}"
+        with container:
+            yield DataTable(
+                id="mrun-table", zebra_stripes=True, cursor_type="row",
+            )
+            yield RichLog(
+                id="mrun-log", highlight=False, markup=False,
+                wrap=False, max_lines=5000,
+            )
+            with Horizontal(id="mrun-buttons"):
+                yield Button("Dừng", id="mrun-stop", variant="error")
+                yield Button("Quay lại", id="mrun-back", variant="default")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one("#mrun-table", DataTable)
+        table.add_columns("STT", "MSV", "Trạng thái", "Kết quả")
+        cols = list(table.columns.values())
+        widths = [5, 18, 20, None]  # None = auto (kết quả)
+        for col, w in zip(cols, widths):
+            if w is None:
+                col.auto_width = True
+            else:
+                col.auto_width = False
+                col.width = w
+        # Seed 1 row / account, key theo username.
+        icon, color, label = STATUS_PENDING
+        for i, acc in enumerate(self.cfg.accounts, 1):
+            row_key = f"acc{i}"
+            self._row_keys[acc.username] = row_key
+            table.add_row(
+                str(i),
+                RichText(acc.username, style="#cad3f5"),
+                RichText(f"{icon} {label}", style=color),
+                RichText("—", style="#5b6078"),
+                key=row_key,
+            )
+        # Start worker sau khi table seed xong (tránh race query_one).
+        self._start_run()
+
+    # ---------- realtime updates ----------
+
+    def _update_status(self, username: str, ev: str, msg: str) -> None:
+        """Cập nhật cột Trạng thái theo event. Chạy trên main thread
+        (on_progress được gọi trong worker cùng event loop nên OK)."""
+        row_key_str = self._row_keys.get(username)
+        if row_key_str is None:
+            return
+        status = self._EV_STATUS.get(ev)
+        if status is None:
+            return
+        try:
+            table = self.query_one("#mrun-table", DataTable)
+            row_key = table.rows[row_key_str].key
+        except (KeyError, Exception):  # noqa: BLE001
+            return
+        col_keys = list(table.columns.keys())
+        if len(col_keys) < 3:
+            return
+        icon, color, label = status
+        table.update_cell(row_key, col_keys[2], RichText(f"{icon} {label}", style=color))
+
+    def _fill_result(self, username: str, res: Dict[str, Any]) -> None:
+        """Điền cột Kết quả khi account xong (registered/total hoặc lỗi)."""
+        row_key_str = self._row_keys.get(username)
+        if row_key_str is None:
+            return
+        try:
+            table = self.query_one("#mrun-table", DataTable)
+            row_key = table.rows[row_key_str].key
+        except (KeyError, Exception):  # noqa: BLE001
+            return
+        col_keys = list(table.columns.keys())
+        if len(col_keys) < 4:
+            return
+        err = res.get("error")
+        if err:
+            text = RichText(f"✗ {err[:40]}", style="#ed8796")
+            st = STATUS_FAILED
+        else:
+            reg = res.get("registered", 0)
+            failed = res.get("failed", [])
+            sniffed = res.get("sniffed", [])
+            total = reg + len(failed)
+            parts = [f"{reg}/{total} lớp"]
+            if sniffed:
+                parts.append(f"(săn {len(sniffed)})")
+            text = RichText(" ".join(parts),
+                            style="#a6da95" if not failed else "#f5a97f")
+            st = STATUS_SUCCESS if not failed else STATUS_DONE
+        table.update_cell(row_key, col_keys[3], text)
+        # Đồng bộ cột trạng thái cuối
+        icon, color, label = st
+        table.update_cell(row_key, col_keys[2], RichText(f"{icon} {label}", style=color))
+
+    # ---------- worker ----------
+
+    def _start_run(self) -> None:
+        log_widget = self.query_one("#mrun-log", RichLog)
+
+        def _on_progress(username: str, ev: str, msg: str) -> None:
+            # Cập nhật bảng — schedule trên event loop để an toàn với worker.
+            self.call_later(self._update_status, username, ev, msg)
+
+        async def _runner():
+            try:
+                with capture_stdout(log_widget):
+                    results = await self.svc.run(
+                        self.cfg,
+                        on_progress=_on_progress,
+                        should_stop=lambda: self.stop_event.is_set(),
+                    )
+                # Điền kết quả cuối cho từng account
+                for username, res in results.items():
+                    self.call_later(self._fill_result, username, res)
+                ok = sum(1 for r in results.values() if r.get("success"))
+                log_widget.write(
+                    f"\n=== HOÀN TẤT: {ok}/{len(results)} account thành công ==="
+                )
+            except asyncio.CancelledError:
+                self.stop_event.set()
+                log_widget.write("[Đã hủy]")
+            except Exception as e:  # noqa: BLE001
+                log_widget.write(f"[ERROR] {e}")
+            finally:
+                self._done = True
+                try:
+                    btn = self.query_one("#mrun-stop", Button)
+                    btn.label = "Đã xong"
+                    btn.disabled = True
+                except Exception:  # noqa: BLE001
+                    pass
+
+        self.worker_handle = self.app.run_worker(_runner(), exclusive=False)
+
+    # ---------- buttons ----------
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "mrun-stop":
+            self.action_stop()
+        elif event.button.id == "mrun-back":
+            self.action_back()
+
+    def action_stop(self) -> None:
+        if self._done:
+            return
+        self.stop_event.set()
+        self.query_one("#mrun-log", RichLog).write(
+            "[Đã yêu cầu dừng — cắt sniffing, chờ account hiện tại thoát...]"
+        )
+
+    def action_back(self) -> None:
+        # Set stop trước khi pop (dừng mềm). Worker bị cancel khi screen
+        # unmount → finally trong _run_one đóng client.
+        self.stop_event.set()
         self.app.pop_screen()
 
 
@@ -3254,6 +3480,30 @@ class TLUApp(App):
         align-horizontal: center;
     }
     #log-buttons Button {
+        margin: 0 1;
+    }
+
+    /* Multireg run screen (chạy multireg trong TUI) */
+    #mrun-container {
+        padding: 1 2;
+        height: 100%;
+    }
+    #mrun-table {
+        height: auto;
+        max-height: 14;
+        margin-bottom: 1;
+        border: round #5b6078;
+    }
+    #mrun-log {
+        height: 1fr;
+        border: round #5b6078;
+        background: #181926;
+    }
+    #mrun-buttons {
+        padding-top: 1;
+        align-horizontal: center;
+    }
+    #mrun-buttons Button {
         margin: 0 1;
     }
 
