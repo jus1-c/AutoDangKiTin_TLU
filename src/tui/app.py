@@ -64,6 +64,7 @@ from src.services.multireg_service import (
     MultiRegService,
 )
 from src.services.register_service import RegisterService
+from src.services.transfer_service import TransferService
 
 
 # ---------- stdout capture ----------
@@ -617,6 +618,7 @@ class MenuScreen(Screen):
         Binding("4", "calendar", "Lịch"),
         Binding("5", "settings", "Settings"),
         Binding("6", "multireg", "Multi-account"),
+        Binding("7", "transfer", "Chuyển lớp"),
     ]
 
     def __init__(self, user: User, services: dict, offline: bool = False):
@@ -661,6 +663,7 @@ class MenuScreen(Screen):
             yield Button("4. Lịch (ICS / Google)", id="b4", disabled=self.offline)
             yield Button("5. Settings", id="b5")
             yield Button("6. Multi-account (tạo file, chạy bằng CLI)", id="b6")
+            yield Button("7. Chuyển lớp giữa 2 account", id="b7")
             with Horizontal(id="menu-footer"):
                 yield Button("Thoát", id="exit-btn", variant="default")
                 yield Button("Đăng xuất", id="logout-btn", variant="error")
@@ -690,6 +693,12 @@ class MenuScreen(Screen):
             self.app.push_screen(SettingsScreen(self.services))
         elif bid == "b6":
             self.app.push_screen(MultiRegListScreen(self.user, self.services))
+        elif bid == "b7":
+            self.app.push_screen(TransferScreen(self.user, self.services))
+        elif bid == "b7":
+            self.app.push_screen(TransferScreen(self.user, self.services))
+        elif bid == "b7":
+            self.app.push_screen(TransferScreen(self.user, self.services))
         elif bid == "exit-btn":
             self.app.exit()
         elif bid == "logout-btn":
@@ -726,6 +735,9 @@ class MenuScreen(Screen):
 
     def action_multireg(self) -> None:
         self.app.push_screen(MultiRegListScreen(self.user, self.services))
+
+    def action_transfer(self) -> None:
+        self.app.push_screen(TransferScreen(self.user, self.services))
 
 
 # ---------- register screen (multi-select) ----------
@@ -1971,6 +1983,346 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
+# ---------- transfer screen (Feature 2) ----------
+
+
+class TransferScreen(Screen):
+    """Chuyển lớp giữa 2 account. 2 form login trái/phải + 2 bảng lớp đã ĐK.
+
+    Mô hình 2 luồng độc lập:
+    - Tick lớp bên A → A nhả, B chụp (A cho B).
+    - Tick lớp bên B → B nhả, A chụp (B cho A).
+    Give 1 chiều = tick 1 bên. Swap = tick cả 2. Khác môn OK.
+
+    Cross-check eligible: lớp bên cho bị GREY nếu bên nhận không đủ điều
+    kiện (subjectId không nằm trong eligible list của bên nhận).
+
+    2 TLUClient riêng, TẮT auto-renew (tránh renew nhầm creds login.json
+    của account khác). Close cả 2 khi thoát screen.
+    """
+
+    BINDINGS = [
+        Binding("escape", "back", "Quay lại"),
+    ]
+
+    def __init__(self, user: User, services: dict):
+        super().__init__()
+        self.user = user
+        self.services = services
+        # State mỗi bên. period_id = active period (main/summer, cái nào
+        # đang mở). enrolled = List[Course]. eligible = set(subjectId).
+        self._sides: Dict[str, Dict[str, Any]] = {
+            "a": self._blank_side(),
+            "b": self._blank_side(),
+        }
+
+    @staticmethod
+    def _blank_side() -> Dict[str, Any]:
+        return {
+            "client": None, "user": None, "register": None,
+            "period_id": None, "is_summer": False,
+            "enrolled": [], "eligible": set(), "logged": False,
+        }
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Container(id="transfer-container"):
+            yield Label("CHUYỂN LỚP GIỮA 2 ACCOUNT", id="transfer-title")
+            yield Label(
+                "Tick lớp bên nào = bên đó NHẢ, bên kia CHỤP. "
+                "Lớp xám = bên nhận không đủ điều kiện học.",
+                id="transfer-hint", markup=False,
+            )
+            with Horizontal(id="transfer-cols"):
+                with Vertical(classes="transfer-panel", id="panel-a"):
+                    yield Label("A — Chưa đăng nhập", id="a-header")
+                    with Horizontal(classes="tf-row"):
+                        yield Input(placeholder="Mã SV A", id="a-user")
+                        yield Input(placeholder="Mật khẩu A", password=True, id="a-pass")
+                    with Horizontal(classes="tf-row"):
+                        yield Button("Đăng nhập", id="a-login", variant="primary")
+                        yield Button("Dùng user hiện tại", id="a-login-current")
+                    yield SelectionList[int](id="a-sel")
+                with Vertical(classes="transfer-panel", id="panel-b"):
+                    yield Label("B — Chưa đăng nhập", id="b-header")
+                    with Horizontal(classes="tf-row"):
+                        yield Input(placeholder="Mã SV B", id="b-user")
+                        yield Input(placeholder="Mật khẩu B", password=True, id="b-pass")
+                    with Horizontal(classes="tf-row"):
+                        yield Button("Đăng nhập", id="b-login", variant="primary")
+                    yield SelectionList[int](id="b-sel")
+            with Horizontal(id="transfer-buttons"):
+                yield Button("Chuyển lớp", id="transfer-run", variant="success")
+                yield Button("Quay lại", id="transfer-back")
+        yield Footer()
+
+    # ---------- client factory (tắt auto-renew) ----------
+
+    @staticmethod
+    def _make_client() -> TLUClient:
+        client = TLUClient()
+
+        async def _no_renew() -> bool:
+            # Tắt auto-renew: với 2 account, renew qua login.json sẽ dùng
+            # NHẦM creds của account khác. Transfer nhanh nên session
+            # sống đủ; nếu 401 giữa chừng → báo lỗi, user login lại.
+            return False
+
+        client._try_renew_token = _no_renew  # type: ignore[assignment]
+        return client
+
+    # ---------- button dispatch ----------
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "transfer-back":
+            self.app.pop_screen()
+        elif bid == "a-login":
+            u = self.query_one("#a-user", Input).value.strip()
+            p = self.query_one("#a-pass", Input).value
+            self.run_worker(self._login_side("a", u, p), exclusive=False)
+        elif bid == "a-login-current":
+            self._login_current()
+        elif bid == "b-login":
+            u = self.query_one("#b-user", Input).value.strip()
+            p = self.query_one("#b-pass", Input).value
+            self.run_worker(self._login_side("b", u, p), exclusive=False)
+        elif bid == "transfer-run":
+            await self._do_transfer()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    def _login_current(self) -> None:
+        """Điền + login account hiện tại từ login.json vào form A."""
+        if not os.path.exists(Config.LOGIN_FILE):
+            self.notify("Không có login.json (chưa lưu đăng nhập).", severity="warning")
+            return
+        try:
+            with open(Config.LOGIN_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            u = data.get("username") or ""
+            p = data.get("password") or ""
+        except (json.JSONDecodeError, OSError) as e:
+            self.notify(f"Đọc login.json lỗi: {e}", severity="error")
+            return
+        if not u or not p:
+            self.notify("login.json thiếu username/password.", severity="warning")
+            return
+        self.query_one("#a-user", Input).value = u
+        self.query_one("#a-pass", Input).value = p
+        self.run_worker(self._login_side("a", u, p), exclusive=False)
+
+    # ---------- login + fetch enrolled/eligible ----------
+
+    async def _login_side(self, side: str, username: str, password: str) -> None:
+        header = self.query_one(f"#{side}-header", Label)
+        if not username or not password:
+            self.notify(f"Thiếu username/password bên {side.upper()}.", severity="warning")
+            return
+        # Chặn login trùng account 2 bên (drop+grab cùng account vô nghĩa).
+        other = "b" if side == "a" else "a"
+        other_user = self._sides[other].get("user")
+        if other_user is not None and str(other_user.student_id) and \
+                other_user.username == username:
+            self.notify("2 bên không được cùng 1 account.", severity="error")
+            return
+
+        header.update(f"{side.upper()} — đang đăng nhập...")
+        # Đóng client cũ nếu login lại
+        old = self._sides[side].get("client")
+        if old is not None:
+            try:
+                await old.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self._sides[side] = self._blank_side()
+
+        client = self._make_client()
+        try:
+            auth = AuthService(client)
+            user = await auth.login(username, password, save=False)
+            register = RegisterService(client)
+            periods = await register.get_active_periods(user)
+            if not periods:
+                header.update(f"{side.upper()} — {user.full_name}: KHÔNG có kỳ mở ĐK/hủy")
+                self.notify(
+                    f"{side.upper()}: không có học kỳ nào đang mở đăng ký/hủy.",
+                    severity="warning",
+                )
+                await client.close()
+                return
+            # Gom enrolled + eligible từ TẤT CẢ period active (thường 1).
+            # period_id chính = period đầu (dùng cho URL drop/register).
+            primary = periods[0]
+            enrolled: List[Course] = []
+            eligible: set = set()
+            seen_codes: set = set()
+            for pd in periods:
+                view = pd["view"]
+                for c in register.get_enrolled_courses(view):
+                    if c.code not in seen_codes:
+                        seen_codes.add(c.code)
+                        # Tag period cho course (drop/register đúng kỳ)
+                        c.data["_transfer_period_id"] = pd["period_id"]
+                        enrolled.append(c)
+                eligible |= register.get_eligible_subject_ids(view)
+            self._sides[side] = {
+                "client": client, "user": user, "register": register,
+                "period_id": primary["period_id"],
+                "is_summer": primary["is_summer"],
+                "enrolled": enrolled, "eligible": eligible, "logged": True,
+            }
+            header.update(
+                f"{side.upper()} — {user.full_name} ({user.student_id}) | "
+                f"{len(enrolled)} lớp đã ĐK"
+            )
+            # Populate cả 2 bên (grey phụ thuộc eligible bên kia)
+            self._populate("a")
+            self._populate("b")
+        except Exception as e:  # noqa: BLE001
+            header.update(f"{side.upper()} — lỗi đăng nhập")
+            self.notify(f"{side.upper()} login lỗi: {e}", severity="error")
+            try:
+                await client.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _populate(self, side: str) -> None:
+        """Đổ enrolled vào SelectionList, grey lớp bên nhận không đủ ĐK."""
+        s = self._sides[side]
+        if not s["logged"]:
+            return
+        try:
+            sel: SelectionList = self.query_one(f"#{side}-sel", SelectionList)
+        except Exception:  # noqa: BLE001
+            return
+        sel.clear_options()
+        other = "b" if side == "a" else "a"
+        other_side = self._sides[other]
+        other_eligible = other_side["eligible"] if other_side["logged"] else None
+        for i, c in enumerate(s["enrolled"]):
+            sid = c.data.get("subjectId")
+            disabled = False
+            suffix = ""
+            if other_eligible is not None:
+                if sid is None or int(sid) not in other_eligible:
+                    disabled = True
+                    suffix = "  ✗ bên nhận không đủ ĐK"
+            label = (
+                f"{c.code} | {(c.display_name or '')[:28]} | "
+                f"{c.sessions_summary or '?'}{suffix}"
+            )
+            sel.add_option(Selection(label, i, disabled=disabled))
+
+    def _selected_courses(self, side: str) -> List[Course]:
+        s = self._sides[side]
+        if not s["logged"]:
+            return []
+        try:
+            sel: SelectionList = self.query_one(f"#{side}-sel", SelectionList)
+        except Exception:  # noqa: BLE001
+            return []
+        out: List[Course] = []
+        for i in list(sel.selected):
+            if 0 <= i < len(s["enrolled"]):
+                out.append(s["enrolled"][i])
+        return out
+
+    # ---------- transfer execution ----------
+
+    async def _do_transfer(self) -> None:
+        if not (self._sides["a"]["logged"] and self._sides["b"]["logged"]):
+            self.notify("Cả 2 account phải đăng nhập trước.", severity="warning")
+            return
+        a_gives = self._selected_courses("a")
+        b_gives = self._selected_courses("b")
+        if not a_gives and not b_gives:
+            self.notify("Chưa tick lớp nào để chuyển.", severity="warning")
+            return
+
+        plan = TransferService.plan(
+            a_gives, self._sides["a"]["enrolled"],
+            b_gives, self._sides["b"]["enrolled"],
+        )
+        # α/γ error → KHÔNG thực thi gì, buộc user sửa selection.
+        if plan["errors"]:
+            for e in plan["errors"]:
+                self.notify(e, severity="error", timeout=8)
+            self.notify(
+                "Có xung đột lịch với lớp đang GIỮ — sửa lựa chọn rồi thử lại. "
+                "KHÔNG thực thi gì.",
+                severity="error", timeout=8,
+            )
+            return
+
+        n_beta = len(plan["beta_pairs"])
+        if n_beta:
+            self.notify(
+                f"⚠ {n_beta} cặp swap cùng slot: phải DROP cả 2 trước khi giành "
+                f"lại — rủi ro mất lớp nếu người ngoài chụp trước!",
+                severity="warning", timeout=8,
+            )
+
+        ctx_a = {
+            "register": self._sides["a"]["register"],
+            "user": self._sides["a"]["user"],
+            "period_id": self._sides["a"]["period_id"],
+        }
+        ctx_b = {
+            "register": self._sides["b"]["register"],
+            "user": self._sides["b"]["user"],
+            "period_id": self._sides["b"]["period_id"],
+        }
+        engine = TransferService()
+
+        n_simple = len(plan["simple_a_to_b"]) + len(plan["simple_b_to_a"])
+        title = f"Chuyển lớp: {n_beta} swap + {n_simple} give"
+
+        async def _work(ctx: LogCaptureContext):
+            ctx.log(f"[TRANSFER] Bắt đầu: {n_beta} β swap, {n_simple} simple give.")
+            try:
+                results = await engine.execute(
+                    plan, ctx_a, ctx_b,
+                    on_log=ctx.log, should_stop=ctx.should_stop,
+                )
+            except Exception as e:  # noqa: BLE001
+                ctx.log(f"[TRANSFER] ✗ LỖI: {type(e).__name__}: {e}")
+                return
+            # Tổng kết trạng thái cuối
+            ctx.log("[TRANSFER] === KẾT QUẢ ===")
+            for r in results.get("beta", []):
+                ctx.log(
+                    f"  SWAP {r['x_code']}↔{r['y_code']}: "
+                    f"A drop X={r['a_dropped_x']} B drop Y={r['b_dropped_y']} | "
+                    f"A chụp Y={r['a_grabbed_y']} B chụp X={r['b_grabbed_x']}"
+                )
+            for r in results.get("simple", []):
+                ctx.log(
+                    f"  GIVE {r.get('dir', '?')} {r['code']}: "
+                    f"nhả={r['dropped']} chụp={r['grabbed']}"
+                )
+            ctx.log("[TRANSFER] Xong. Kiểm tra lại lịch mỗi account để xác nhận.")
+
+        log_screen = LogScreen(
+            title,
+            status_rows=[],
+            on_mount_start=lambda: log_screen.run_async(_work),
+        )
+        self.app.push_screen(log_screen)
+
+    # ---------- cleanup ----------
+
+    async def on_unmount(self) -> None:
+        for side in ("a", "b"):
+            client = self._sides[side].get("client")
+            if client is not None:
+                try:
+                    await client.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+
 # ---------- countdown screen (schedule) ----------
 
 
@@ -2522,6 +2874,60 @@ class TLUApp(App):
         padding-top: 1;
     }
     #subpick-buttons Button {
+        margin: 0 1;
+    }
+
+    /* Transfer screen (Feature 2) */
+    #transfer-container {
+        padding: 1 2;
+        width: 98%;
+        height: 98%;
+        background: #1e2030;
+        border: round #c6a0f6;
+    }
+    #transfer-title {
+        text-style: bold;
+        color: #c6a0f6;
+        text-align: center;
+        padding-bottom: 1;
+    }
+    #transfer-hint {
+        color: #a5adcb;
+        padding: 0 0 1 0;
+    }
+    #transfer-cols {
+        height: 1fr;
+    }
+    .transfer-panel {
+        width: 1fr;
+        height: 100%;
+        padding: 0 1;
+        border: round #5b6078;
+    }
+    #a-header, #b-header {
+        text-style: bold;
+        color: #a6da95;
+        padding-bottom: 1;
+    }
+    .tf-row {
+        height: 3;
+        align-vertical: middle;
+        padding: 0 0 1 0;
+    }
+    .tf-row Input {
+        width: 1fr;
+    }
+    .tf-row Button {
+        margin: 0 1 0 0;
+    }
+    #a-sel, #b-sel {
+        height: 1fr;
+    }
+    #transfer-buttons {
+        padding-top: 1;
+        align-horizontal: center;
+    }
+    #transfer-buttons Button {
         margin: 0 1;
     }
 
