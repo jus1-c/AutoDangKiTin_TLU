@@ -208,6 +208,7 @@ class MultiRegService:
         self,
         cfg: MultiRegConfig,
         on_progress: Optional[ProgressFn] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """Chạy toàn bộ account song song. Trả dict {username: result}.
 
@@ -219,6 +220,9 @@ class MultiRegService:
           "log_file": str,      # đường dẫn file log
           "error": str | None,  # exception message nếu có
         }
+
+        `should_stop()` (optional) được poll để dừng mềm: cắt sniffing +
+        thoát trước mỗi giai đoạn. CLI không truyền → chạy y hệt như cũ.
         """
         Config.ensure_dirs()
         # Load settings (SNIFF_INTERVAL, CONCURRENCY_LIMIT, ...) — có sẵn
@@ -226,7 +230,8 @@ class MultiRegService:
         # gọi lại ở đây; nếu caller quên gọi thì .env defaults vẫn OK.
 
         tasks = [
-            self._run_one(cfg, acc, on_progress) for acc in cfg.accounts
+            self._run_one(cfg, acc, on_progress, should_stop)
+            for acc in cfg.accounts
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         out: Dict[str, Dict[str, Any]] = {}
@@ -249,9 +254,12 @@ class MultiRegService:
         cfg: MultiRegConfig,
         acc: MultiRegAccount,
         on_progress: Optional[ProgressFn],
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
         """Run 1 account. Return result dict (không raise — mọi lỗi
         được catch + gói vào result['error'])."""
+        def _stopped() -> bool:
+            return bool(should_stop and should_stop())
         ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_user = re.sub(r"[^\w\-.]+", "_", acc.username)
         log_path = os.path.join(Config.LOGS_DIR, f"{safe_user}_{ts}.log")
@@ -330,6 +338,9 @@ class MultiRegService:
         # Login + register + (optional) sniff — mỗi account 1 client
         client = TLUClient()
         try:
+            if _stopped():
+                _emit("stopped", "Đã dừng trước khi login.")
+                return result
             auth = AuthService(client)
             _emit("login", "Đang login...")
             # Không lưu login.json (đã có creds trong multireg file) —
@@ -341,12 +352,12 @@ class MultiRegService:
 
             if is_subject_mode:
                 await self._run_subject_mode(
-                    acc, user, register, result, _emit, _log,
+                    acc, user, register, result, _emit, _log, _stopped,
                 )
             else:
                 await self._run_profile_mode(
                     acc, user, register, courses, sem_id_from_profile,
-                    result, _emit, _log,
+                    result, _emit, _log, _stopped,
                 )
         except Exception as e:  # noqa: BLE001
             result["error"] = f"{type(e).__name__}: {e}"
@@ -368,6 +379,7 @@ class MultiRegService:
         result: Dict[str, Any],
         _emit: Callable[[str, str], None],
         _log: Callable[[str], None],
+        _stopped: Callable[[], bool] = lambda: False,
     ) -> None:
         """Profile-mode: đăng ký danh sách LỚP cụ thể (register_custom_for_semester)."""
         # Pick semester
@@ -400,7 +412,7 @@ class MultiRegService:
         is_summer_for_sniff = (active_sem_id == user.semester_summer_id)
         await self._sniff_fallback(
             register, user, failed, is_summer_for_sniff, result, _emit, _log,
-            total=len(courses),
+            total=len(courses), _stopped=_stopped,
         )
 
     async def _run_subject_mode(
@@ -411,6 +423,7 @@ class MultiRegService:
         result: Dict[str, Any],
         _emit: Callable[[str, str], None],
         _log: Callable[[str], None],
+        _stopped: Callable[[], bool],
     ) -> None:
         """Subject-mode: pick MÔN giống menu "1. Đăng ký nhanh".
 
@@ -475,7 +488,7 @@ class MultiRegService:
 
         await self._sniff_fallback(
             register, user, failed, acc.is_summer, result, _emit, _log,
-            total=total,
+            total=total, _stopped=_stopped,
         )
 
     async def _sniff_fallback(
@@ -488,6 +501,7 @@ class MultiRegService:
         _emit: Callable[[str, str], None],
         _log: Callable[[str], None],
         total: int,
+        _stopped: Optional[Callable[[], bool]] = None,
     ) -> None:
         """Sniff các lớp fail (status=-6 lớp đầy) — hành vi MẶC ĐỊNH global
         giống menu "1. Đăng ký nhanh" (Config.AUTO_SNIFF_FALLBACK)."""
@@ -500,6 +514,7 @@ class MultiRegService:
                 jitter=Config.SNIFF_JITTER,
                 max_duration_min=Config.SNIFF_MAX_DURATION_MIN,
                 on_log=lambda m: _log(f"[SNIFF] {m}"),
+                should_stop=_stopped,
             )
             still_failed_codes = {c.code for c in sniff_failed}
             sniffed = [c for c in failed if c.code not in still_failed_codes]
