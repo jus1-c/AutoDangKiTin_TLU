@@ -2838,7 +2838,7 @@ class TLUApp(App):
     }
 
     /* Rows that contain a ToggleSwitch + Label */
-    #save-login-row, #summer-row, #debug-row, .settings-row {
+    #summer-row, #debug-row, .settings-row {
         height: 3;
         align-vertical: middle;
         padding: 1 0 0 0;
@@ -3043,7 +3043,8 @@ class TLUApp(App):
         margin-bottom: 1;
     }
     .opt-row {
-        height: 1;
+        height: 3;
+        align-vertical: middle;
         margin: 0;
         padding: 0;
     }
