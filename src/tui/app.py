@@ -3011,7 +3011,13 @@ class TLUApp(App):
         align-horizontal: center;
         padding-top: 1;
     }
+    #settings-container {
+        height: 1fr;
+        padding: 1 2;
+        overflow-y: auto;
+    }
     #settings-buttons {
+        height: auto;
         padding-top: 1;
         align-horizontal: center;
     }
