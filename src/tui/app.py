@@ -3172,12 +3172,22 @@ class TLUApp(App):
         border: round #5b6078;
     }
     #reg-toolbar, #reg-toolbar2, #builder-toolbar, #builder-toolbar2, #multireg-toolbar {
-        height: auto;
+        height: 3;
+        align-vertical: middle;
         padding: 0 1;
     }
     #reg-toolbar Button, #reg-toolbar2 Button, #builder-toolbar Button,
     #builder-toolbar2 Button, #multireg-toolbar Button {
         margin: 0 1;
+    }
+    /* Toggle + label trong toolbar hàng 1 — căn giữa dọc so với nút cao 3 */
+    #reg-toolbar Label, #builder-toolbar Label {
+        height: 3;
+        content-align-vertical: middle;
+        padding: 0 1 0 0;
+    }
+    #reg-toolbar ToggleSwitch, #builder-toolbar ToggleSwitch {
+        height: 3;
     }
     #builder-save-row {
         height: auto;
