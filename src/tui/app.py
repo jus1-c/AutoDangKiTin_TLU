@@ -647,24 +647,31 @@ class MenuScreen(Screen):
         if self.offline:
             self.app.title = "AutoDangKiTin TLU [OFFLINE]"
         yield Header()
-        with Container(id="menu-container"):
+        container = Container(id="menu-container")
+        container.border_title = "AutoDangKiTin TLU"
+        with container:
             if self.offline:
                 yield Label(
-                    f"--- CHẾ ĐỘ OFFLINE ({self._cache_age_text()}) ---",
+                    f"⚠ OFFLINE ({self._cache_age_text()})",
                     id="offline-banner",
                 )
             yield Label(
                 f"Xin chào {self.user.full_name} ({self.user.student_id})",
                 id="menu-greet",
             )
-            yield Label("Chọn chức năng (phím số) hoặc click nút:", id="menu-hint")
+            yield Label("Đăng ký", classes="menu-section")
             yield Button("1. Đăng ký nhanh (chọn nhiều môn)", id="b1", variant="primary")
             yield Button("2. Tạo danh sách custom", id="b2", variant="warning")
             yield Button("3. Đăng ký theo profile", id="b3")
+            yield Rule()
+            yield Label("Công cụ", classes="menu-section")
             yield Button("4. Lịch (ICS / Google)", id="b4", disabled=self.offline)
             yield Button("5. Settings", id="b5")
+            yield Rule()
+            yield Label("Nâng cao", classes="menu-section")
             yield Button("6. Multi-account (tạo file, chạy bằng CLI)", id="b6")
             yield Button("7. Chuyển lớp giữa 2 account", id="b7")
+            yield Rule()
             with Horizontal(id="menu-footer"):
                 yield Button("Thoát", id="exit-btn", variant="default")
                 yield Button("Đăng xuất", id="logout-btn", variant="error")
@@ -1134,12 +1141,14 @@ class CustomBuilderScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container():
-            yield Label("TẠO DANH SÁCH CUSTOM", id="builder-title")
+        container = Container()
+        container.border_title = "TẠO DANH SÁCH CUSTOM"
+        with container:
             with Horizontal(id="builder-toolbar"):
                 yield ToggleSwitch(id="summer", value=False)
                 yield Label("Học kỳ hè")
                 yield Button("Tải môn", id="load", variant="primary")
+            with Horizontal(id="builder-toolbar2"):
                 yield Button("Chọn lớp (subject đang trỏ)", id="pick", variant="warning")
                 yield Button("Bỏ chọn lớp", id="clear-pick", variant="error")
                 yield Button("Quay lại", id="back")
@@ -1541,13 +1550,14 @@ class MultiRegListScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container():
-            yield Label("MULTI-ACCOUNT REGISTER (chỉ tạo/quản lý file)", id="multireg-title")
+        container = Container()
+        container.border_title = "MULTI-ACCOUNT REGISTER"
+        with container:
             yield Label(
-                "TUI chỉ tạo file. Để chạy: [b]autodktin multireg run <file>[/b] trong terminal.",
-                id="multireg-hint",
+                "TUI chỉ tạo file. Chạy bằng: autodktin multireg run <file>",
+                id="multireg-hint", markup=False,
             )
-            with Horizontal():
+            with Horizontal(id="multireg-toolbar"):
                 yield Button("Tạo file mới", id="new", variant="primary")
                 yield Button("Làm mới", id="refresh")
                 yield Button("Xóa file đã chọn", id="delete", variant="error")
@@ -1643,8 +1653,9 @@ class SubjectPickerScreen(ModalScreen[Optional[Dict[str, Any]]]):
         self._loaded = False
 
     def compose(self) -> ComposeResult:
-        with Container(id="subpick-container"):
-            yield Label(f"CHỌN MÔN — {self._username}", id="subpick-title")
+        container = Container(id="subpick-container")
+        container.border_title = f"CHỌN MÔN — {self._username}"
+        with container:
             with Horizontal(classes="mb-row"):
                 yield ToggleSwitch(id="subpick-summer", value=False)
                 yield Label("Học kỳ hè")
@@ -1788,8 +1799,10 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
         # - Sniff fallback khi lớp đầy: là hành vi MẶC ĐỊNH global
         #   (Config.AUTO_SNIFF_FALLBACK ở Settings), giống menu "1. Đăng ký
         #   nhanh". Account chỉ cần username/password/profile.
-        with Container(id="multireg-builder-container"):
-            yield Label("TẠO FILE MULTIREG MỚI", id="multireg-builder-title")
+        container = Container(id="multireg-builder-container")
+        container.border_title = "TẠO FILE MULTIREG"
+        with container:
+            yield Label("Cấu hình đợt", classes="mb-section")
             with Horizontal(classes="mb-row"):
                 yield Label("Tên đợt:", classes="mb-lbl")
                 yield Input(placeholder="vd: dot1_thang7", id="mb-name")
@@ -1805,12 +1818,14 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
                     id="mb-hint", markup=False,
                 )
 
-            yield Label("Danh sách account đã thêm:", id="mb-list-title")
+            yield Rule()
+            yield Label("Account đã thêm", classes="mb-section")
             yield DataTable(
                 id="mb-table", zebra_stripes=True, cursor_type="row",
             )
 
-            yield Label("Thêm account mới:", id="mb-add-title")
+            yield Rule()
+            yield Label("Thêm account", classes="mb-section")
             with Horizontal(classes="mb-row"):
                 yield Label("Username:", classes="mb-lbl-narrow")
                 yield Input(placeholder="mã SV", id="mb-user")
@@ -2031,8 +2046,9 @@ class TransferScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(id="transfer-container"):
-            yield Label("CHUYỂN LỚP GIỮA 2 ACCOUNT", id="transfer-title")
+        container = Container(id="transfer-container")
+        container.border_title = "CHUYỂN LỚP GIỮA 2 ACCOUNT"
+        with container:
             yield Label(
                 "Tick lớp bên nào = bên đó NHẢ, bên kia CHỤP. "
                 "Lớp xám = bên nhận không đủ điều kiện học.",
@@ -2056,6 +2072,7 @@ class TransferScreen(Screen):
                     with Horizontal(classes="tf-row"):
                         yield Button("Đăng nhập", id="b-login", variant="primary")
                     yield SelectionList[int](id="b-sel")
+            yield Rule()
             with Horizontal(id="transfer-buttons"):
                 yield Button("Chuyển lớp", id="transfer-run", variant="success")
                 yield Button("Quay lại", id="transfer-back")
@@ -2851,11 +2868,9 @@ class TLUApp(App):
         background: #1e2030;
         border: round #c6a0f6;
     }
-    #multireg-builder-title {
-        text-style: bold;
+    .mb-section {
         color: #c6a0f6;
-        text-align: center;
-        padding-bottom: 1;
+        text-style: bold;
     }
     .mb-row {
         height: 3;
@@ -2876,11 +2891,6 @@ class TLUApp(App):
     #mb-hint {
         color: #a5adcb;
         padding: 0 0 1 0;
-    }
-    #mb-list-title, #mb-add-title {
-        color: #c6a0f6;
-        text-style: bold;
-        padding: 1 0 0 0;
     }
     #mb-buttons {
         padding-top: 1;
@@ -3087,32 +3097,48 @@ class TLUApp(App):
     }
 
     /* Menu */
-    #menu-container {
+    MenuScreen {
         align: center middle;
+    }
+    #menu-container {
+        width: 56;
+        height: auto;
         padding: 1 2;
+        background: #1e2030;
+        border: round #c6a0f6;
+    }
+    #offline-banner {
+        text-align: center;
+        color: #f5a97f;
+        text-style: bold;
+        padding-bottom: 1;
     }
     #menu-greet {
         text-align: center;
         text-style: bold;
         color: #a6da95;
-        padding: 1;
-    }
-    #menu-hint {
-        text-align: center;
-        color: #a5adcb;
         padding-bottom: 1;
     }
+    .menu-section {
+        color: #a5adcb;
+        text-style: bold;
+        padding: 0 0 0 1;
+    }
     #menu-container Button {
-        margin: 1 1;
-        min-width: 36;
+        width: 100%;
+        margin: 0 0 1 0;
+    }
+    #menu-container Rule {
+        margin: 0;
     }
     #menu-footer {
+        height: auto;
         align-horizontal: center;
-        padding-top: 1;
     }
     #menu-footer Button {
-        margin: 0 1;
+        width: auto;
         min-width: 16;
+        margin: 0 1;
     }
 
     /* Register / Builder / Profile / Calendar screens */
@@ -3141,11 +3167,12 @@ class TLUApp(App):
         background: #1e2030;
         border: round #5b6078;
     }
-    #reg-toolbar, #reg-toolbar2, #builder-toolbar {
+    #reg-toolbar, #reg-toolbar2, #builder-toolbar, #builder-toolbar2, #multireg-toolbar {
         height: auto;
         padding: 0 1;
     }
-    #reg-toolbar Button, #reg-toolbar2 Button, #builder-toolbar Button {
+    #reg-toolbar Button, #reg-toolbar2 Button, #builder-toolbar Button,
+    #builder-toolbar2 Button, #multireg-toolbar Button {
         margin: 0 1;
     }
     #builder-save-row {
