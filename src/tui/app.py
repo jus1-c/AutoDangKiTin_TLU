@@ -669,7 +669,7 @@ class MenuScreen(Screen):
             yield Button("5. Settings", id="b5")
             yield Rule()
             yield Label("Nâng cao", classes="menu-section")
-            yield Button("6. Multi-account (tạo file, chạy bằng CLI)", id="b6")
+            yield Button("6. Multi-account", id="b6")
             yield Button("7. Chuyển lớp giữa 2 account", id="b7")
             yield Rule()
             with Horizontal(id="menu-footer"):
@@ -761,6 +761,7 @@ class RegisterScreen(Screen):
         self.user = user
         self.services = services
         self.courses: List[List[Course]] = []
+        self._course_names: List[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -776,6 +777,7 @@ class RegisterScreen(Screen):
                 yield Button("Bỏ chọn", id="deselect-all")
                 yield Button("Đăng ký môn đã chọn", id="run", variant="success")
                 yield Button("Quay lại", id="back")
+            yield Input(placeholder="Tìm tên hoặc mã môn...", id="reg-search")
             yield SelectionList[int](id="reg-selection")
         yield Footer()
 
@@ -803,26 +805,37 @@ class RegisterScreen(Screen):
         self.app.pop_screen()
 
     async def _load_courses(self) -> None:
-        sel: SelectionList = self.query_one(SelectionList)
-        sel.clear_options()
         self.courses = []
         is_summer = self._is_summer()
         try:
-            self.courses, names = await self.services["course"].fetch_courses(
+            self.courses, self._course_names = await self.services["course"].fetch_courses(
                 self.user, is_summer
             )
-            for i, name in enumerate(names):
-                if not self.courses[i]:
-                    continue
-                c = self.courses[i][0]
-                label = (
-                    f"{i:>3}. {name[:40]:<40}  "
-                    f"[{c.code}]  {c.current_students}/{c.max_students}"
-                )
-                sel.add_option(Selection(label, i))
+            self._refresh_selection()
         except Exception as e:  # noqa: BLE001
             self.notify(f"Lỗi tải môn: {e}", severity="error")
             print(f"[UI] Load courses FAILED: {e}")
+
+    def _refresh_selection(self) -> None:
+        sel: SelectionList = self.query_one(SelectionList)
+        selected = set(sel.selected)
+        query = self.query_one("#reg-search", Input).value.casefold().strip()
+        sel.clear_options()
+        for i, name in enumerate(self._course_names):
+            if not self.courses[i]:
+                continue
+            c = self.courses[i][0]
+            if query and query not in f"{name} {c.code}".casefold():
+                continue
+            label = (
+                f"{i:>3}. {name[:40]:<40}  "
+                f"[{c.code}]  {c.current_students}/{c.max_students}"
+            )
+            sel.add_option(Selection(label, i, initial_state=i in selected))
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "reg-search" and self.courses:
+            self._refresh_selection()
 
     async def _run_register(self) -> None:
         sel: SelectionList = self.query_one(SelectionList)
@@ -944,11 +957,13 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
         self.current = current
         self._conflict_idx: set[int] = set()
         self._populated = False
+        self._visible_option_indices: List[int] = []
 
     def compose(self) -> ComposeResult:
         container = Container(id="picker-container")
         container.border_title = f"Chọn lớp: {self.subject_name}"
         with container:
+            yield Input(placeholder="Tìm tên hoặc mã lớp...", id="picker-search")
             yield DataTable(id="picker-table", zebra_stripes=True, cursor_type="row")
             with Horizontal(id="picker-buttons"):
                 yield Button("Chọn lớp đang trỏ (Enter)", id="pick-btn", variant="primary")
@@ -969,10 +984,14 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
                 return text[:max_len]
             return text[: max_len - 1] + "…"
 
+        query = self.query_one("#picker-search", Input).value.casefold().strip()
+
         # ---------- 1) Build all cell data first ----------
         # We need every cell's content before we can size the columns.
         rows_data: List[Dict[str, Any]] = []
         for i, opt in enumerate(self.options):
+            if query and query not in f"{opt.code} {opt.display_name}".casefold():
+                continue
             conflict = any(opt.conflicts_with(o) for o in self.other_selected)
             chosen = opt == self.current
             if conflict:
@@ -1070,19 +1089,29 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
 
         # ---------- 5) Add rows (cells already truncated in step 2) ----------
         cursor_target = 0
-        for row in rows_data:
+        self._visible_option_indices = []
+        for visible_i, row in enumerate(rows_data):
             cells = [RichText(t, style=row["style"]) for t in row["truncated"]]
             table.add_row(*cells, key=str(row["i"]))
+            self._visible_option_indices.append(row["i"])
             if row["chosen"]:
-                cursor_target = row["i"]
+                cursor_target = visible_i
             elif cursor_target == 0 and not row["conflict"] and not row["chosen"]:
-                cursor_target = row["i"]
+                cursor_target = visible_i
 
         table.focus()
         try:
             table.cursor_coordinate = (cursor_target, 0)
         except Exception:
             pass
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "picker-search" or not self._populated:
+            return
+        table = self.query_one("#picker-table", DataTable)
+        table.clear(columns=True)
+        self._populated = False
+        self.on_mount()
 
     def on_data_table_row_activated(self, event) -> None:
         """Double-click on a row also tries to pick."""
@@ -1102,16 +1131,17 @@ class ClassPickerScreen(ModalScreen[Optional[Course]]):
         self._try_pick(table.cursor_row)
 
     def _try_pick(self, row: Optional[int]) -> None:
-        if row is None or row < 0 or row >= len(self.options):
+        if row is None or row < 0 or row >= len(self._visible_option_indices):
             return
-        if row in self._conflict_idx:
+        option_idx = self._visible_option_indices[row]
+        if option_idx in self._conflict_idx:
             self.app.bell()
             self.notify(
                 "Lớp này trùng lịch với lớp đã chọn — không thể chọn.",
                 severity="warning",
             )
             return
-        self.dismiss(self.options[row])
+        self.dismiss(self.options[option_idx])
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -1138,6 +1168,7 @@ class CustomBuilderScreen(Screen):
         self.courses: List[List[Course]] = []
         self.names: List[str] = []
         self.picks: Dict[int, Course] = {}
+        self._visible_subject_indices: List[int] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -1152,6 +1183,7 @@ class CustomBuilderScreen(Screen):
                 yield Button("Chọn lớp (subject đang trỏ)", id="pick", variant="warning")
                 yield Button("Bỏ chọn lớp", id="clear-pick", variant="error")
                 yield Button("Quay lại", id="back")
+            yield Input(placeholder="Tìm tên hoặc mã môn...", id="builder-search")
             yield DataTable(id="builder-table", zebra_stripes=True, cursor_type="row")
             with Horizontal(id="builder-save-row"):
                 yield Input(placeholder="Tên file (rỗng = custom_{time}.json)", id="save-name")
@@ -1201,18 +1233,12 @@ class CustomBuilderScreen(Screen):
         self.app.pop_screen()
 
     async def _load_courses(self) -> None:
-        table = self.query_one("#builder-table", DataTable)
-        table.clear()
         self.picks.clear()
         try:
             self.courses, self.names = await self.services["course"].fetch_courses(
                 self.user, self._is_summer()
             )
-            for i, name in enumerate(self.names):
-                if not self.courses[i]:
-                    continue
-                c = self.courses[i][0]
-                table.add_row(str(i), name, "---", f"{c.current_students}/{c.max_students}", key=str(i))
+            self._refresh_table()
         except Exception as e:  # noqa: BLE001
             self.notify(f"Lỗi tải môn: {e}", severity="error")
 
@@ -1239,13 +1265,22 @@ class CustomBuilderScreen(Screen):
     def _refresh_table(self) -> None:
         table = self.query_one("#builder-table", DataTable)
         table.clear()
+        self._visible_subject_indices = []
+        query = self.query_one("#builder-search", Input).value.casefold().strip()
         for i, name in enumerate(self.names):
             if not self.courses[i]:
                 continue
             sel = self.picks.get(i)
             sel_text = self._selected_cell_text(sel)
             c = self.courses[i][0]
+            if query and query not in f"{name} {c.code}".casefold():
+                continue
+            self._visible_subject_indices.append(i)
             table.add_row(str(i), name, sel_text, f"{c.current_students}/{c.max_students}", key=str(i))
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "builder-search" and self.courses:
+            self._refresh_table()
 
     async def _pick_class(self) -> None:
         # Guard: don't push a second picker if one is already on the stack
@@ -1283,14 +1318,8 @@ class CustomBuilderScreen(Screen):
         )
 
     def _row_to_subject_idx(self, row: int) -> Optional[int]:
-        # Map visible row back to subject index (skip empty subjects)
-        seen = 0
-        for i, group in enumerate(self.courses):
-            if not group:
-                continue
-            if seen == row:
-                return i
-            seen += 1
+        if 0 <= row < len(self._visible_subject_indices):
+            return self._visible_subject_indices[row]
         return None
 
     def _clear_pick(self) -> None:
@@ -1332,6 +1361,7 @@ class ProfileScreen(Screen):
         self.user = user
         self.services = services
         self.custom: CustomService = services["custom"]
+        self._visible_files: List[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -1343,6 +1373,7 @@ class ProfileScreen(Screen):
                 yield Button("Đăng ký file đã chọn", id="run", variant="success")
                 yield Button("Xóa file đã chọn", id="delete", variant="error")
                 yield Button("Quay lại", id="back")
+            yield Input(placeholder="Tìm tên profile...", id="profile-search")
             yield DataTable(id="profile-table", zebra_stripes=True, cursor_type="row")
         yield Footer()
 
@@ -1388,7 +1419,11 @@ class ProfileScreen(Screen):
     def _refresh(self) -> None:
         table = self.query_one("#profile-table", DataTable)
         table.clear()
+        self._visible_files = []
+        query = self.query_one("#profile-search", Input).value.casefold().strip()
         for i, f in enumerate(self.custom.list_files()):
+            if query and query not in f.casefold():
+                continue
             path = os.path.join(Config.RES_DIR, "custom", f)
             try:
                 saved_sem_id, courses = CustomService.load_profile(path)
@@ -1400,16 +1435,20 @@ class ProfileScreen(Screen):
             table.add_row(
                 str(i), f, hk_label, str(len(courses)), key=f,
             )
+            self._visible_files.append(f)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "profile-search":
+            self._refresh()
 
     def _delete_selected(self) -> None:
         table = self.query_one("#profile-table", DataTable)
         if table.cursor_row is None or table.cursor_row < 0:
             self.notify("Chưa chọn file.", severity="warning")
             return
-        files = self.custom.list_files()
-        if table.cursor_row >= len(files):
+        if table.cursor_row >= len(self._visible_files):
             return
-        key = files[table.cursor_row]
+        key = self._visible_files[table.cursor_row]
         self.custom.delete_files([key])
         self._refresh()
         self.notify(f"Đã xóa {key}", severity="information")
@@ -1419,10 +1458,9 @@ class ProfileScreen(Screen):
         if table.cursor_row is None or table.cursor_row < 0:
             self.notify("Chưa chọn file.", severity="warning")
             return
-        files = self.custom.list_files()
-        if table.cursor_row >= len(files):
+        if table.cursor_row >= len(self._visible_files):
             return
-        key = files[table.cursor_row]
+        key = self._visible_files[table.cursor_row]
         path = os.path.join(Config.RES_DIR, "custom", key)
         try:
             saved_sem_id, target_courses = CustomService.load_profile(path)
@@ -1547,6 +1585,7 @@ class MultiRegListScreen(Screen):
         self.user = user
         self.services = services
         self.svc = MultiRegService()
+        self._visible_files: List[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -1563,6 +1602,7 @@ class MultiRegListScreen(Screen):
                 yield Button("Làm mới", id="refresh")
                 yield Button("Xóa file đã chọn", id="delete", variant="error")
                 yield Button("Quay lại", id="back")
+            yield Input(placeholder="Tìm tên đợt hoặc file...", id="multireg-search")
             yield DataTable(
                 id="multireg-table", zebra_stripes=True, cursor_type="row"
             )
@@ -1581,15 +1621,26 @@ class MultiRegListScreen(Screen):
     def _refresh(self) -> None:
         table = self.query_one("#multireg-table", DataTable)
         table.clear()
+        self._visible_files = []
+        query = self.query_one("#multireg-search", Input).value.casefold().strip()
         for i, f in enumerate(self.svc.list_files()):
             try:
                 cfg = self.svc.load(f)
+                if query and query not in f"{f} {cfg.name}".casefold():
+                    continue
                 table.add_row(
                     str(i), f, cfg.name or "?", str(len(cfg.accounts)),
                     cfg.shared_profile or "—", key=f,
                 )
             except Exception as e:  # noqa: BLE001
+                if query and query not in f.casefold():
+                    continue
                 table.add_row(str(i), f, f"lỗi: {e}", "?", "—", key=f)
+            self._visible_files.append(f)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "multireg-search":
+            self._refresh()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
@@ -1613,10 +1664,9 @@ class MultiRegListScreen(Screen):
         if table.cursor_row is None or table.cursor_row < 0:
             self.notify("Chưa chọn file để chạy.", severity="warning")
             return
-        files = self.svc.list_files()
-        if table.cursor_row >= len(files):
+        if table.cursor_row >= len(self._visible_files):
             return
-        key = files[table.cursor_row]
+        key = self._visible_files[table.cursor_row]
         try:
             cfg = self.svc.load(key)
         except Exception as e:  # noqa: BLE001
@@ -1640,10 +1690,9 @@ class MultiRegListScreen(Screen):
         if table.cursor_row is None or table.cursor_row < 0:
             self.notify("Chưa chọn file.", severity="warning")
             return
-        files = self.svc.list_files()
-        if table.cursor_row >= len(files):
+        if table.cursor_row >= len(self._visible_files):
             return
-        key = files[table.cursor_row]
+        key = self._visible_files[table.cursor_row]
         self.svc.delete(key)
         self._refresh()
         self.notify(f"Đã xóa {key}", severity="information")
@@ -2006,6 +2055,7 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
         self.custom_svc: CustomService = services["custom"]
         # Danh sách account đang build (list of dict)
         self._accounts: List[Dict[str, Any]] = []
+        self._visible_account_indices: List[int] = []
 
     def compose(self) -> ComposeResult:
         profiles = self.custom_svc.list_files()
@@ -2046,6 +2096,7 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
 
             yield Rule()
             yield Label("Account đã thêm", classes="mb-section")
+            yield Input(placeholder="Tìm username...", id="mb-search")
             yield DataTable(
                 id="mb-table", zebra_stripes=True, cursor_type="row",
             )
@@ -2088,6 +2139,8 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
     def _refresh_table(self) -> None:
         table = self.query_one("#mb-table", DataTable)
         table.clear()
+        self._visible_account_indices = []
+        query = self.query_one("#mb-search", Input).value.casefold().strip()
         for i, a in enumerate(self._accounts):
             if a.get("subjects"):
                 mode = "chọn môn"
@@ -2099,6 +2152,9 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
             else:
                 mode = "profile"
                 detail = "(shared)"
+            if query and query not in f"{a['username']} {detail}".casefold():
+                continue
+            self._visible_account_indices.append(i)
             table.add_row(
                 str(i),
                 a["username"],
@@ -2106,6 +2162,10 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
                 detail[:60],
                 key=str(i),
             )
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "mb-search":
+            self._refresh_table()
 
     def _add_account(self) -> None:
         u = self.query_one("#mb-user", Input).value.strip()
@@ -2138,9 +2198,9 @@ class MultiRegBuilderScreen(ModalScreen[Optional[str]]):
         if table.cursor_row is None or table.cursor_row < 0:
             self.notify("Chưa chọn account.", severity="warning")
             return
-        if table.cursor_row >= len(self._accounts):
+        if table.cursor_row >= len(self._visible_account_indices):
             return
-        removed = self._accounts.pop(table.cursor_row)
+        removed = self._accounts.pop(self._visible_account_indices[table.cursor_row])
         self._refresh_table()
         self.notify(f"Đã xóa {removed['username']}", severity="information")
 
@@ -2507,7 +2567,7 @@ class TransferScreen(Screen):
         n_beta = len(plan["beta_pairs"])
         if n_beta:
             self.notify(
-                f"⚠ {n_beta} cặp swap cùng slot: phải DROP cả 2 trước khi giành "
+                f"⚠ {n_beta} cặp swap cùng slot/cùng môn: phải DROP cả 2 trước khi giành "
                 f"lại — rủi ro mất lớp nếu người ngoài chụp trước!",
                 severity="warning", timeout=8,
             )
@@ -2540,10 +2600,18 @@ class TransferScreen(Screen):
             # Tổng kết trạng thái cuối
             ctx.log("[TRANSFER] === KẾT QUẢ ===")
             for r in results.get("beta", []):
+                rollback = ""
+                if r.get("a_rollback_x") is not None or r.get("b_rollback_y") is not None:
+                    rollback = (
+                        f" | rollback A={r.get('a_rollback_x')} "
+                        f"B={r.get('b_rollback_y')}"
+                    )
                 ctx.log(
                     f"  SWAP {r['x_code']}↔{r['y_code']}: "
+                    f"attempt={r.get('attempt', 1)} | "
                     f"A drop X={r['a_dropped_x']} B drop Y={r['b_dropped_y']} | "
                     f"A chụp Y={r['a_grabbed_y']} B chụp X={r['b_grabbed_x']}"
+                    f"{rollback}"
                 )
             for r in results.get("simple", []):
                 ctx.log(
@@ -2928,6 +2996,23 @@ class SettingsScreen(Screen):
                 yield Label("Lead time (giây trước khi auto-launch):")
                 yield Input(value=str(Config.SCHEDULE_LEAD_SECONDS), id="schedule-lead")
             yield Rule()
+            yield Label("Chuyển lớp", classes="set-section")
+            with Horizontal(id="row-transfer-lead", classes="settings-row"):
+                yield Label("Pre-burst lead (giây trước khi drop):")
+                yield Input(value=str(Config.TRANSFER_PRE_BURST_LEAD), id="transfer-lead")
+            with Horizontal(id="row-transfer-timeout", classes="settings-row"):
+                yield Label("Timeout chụp lớp (giây):")
+                yield Input(value=str(Config.TRANSFER_GRAB_TIMEOUT), id="transfer-timeout")
+            with Horizontal(id="row-transfer-beta-retry", classes="settings-row"):
+                yield Label("Số lần thử lại beta sau rollback:")
+                yield Input(value=str(Config.TRANSFER_BETA_RETRY_COUNT), id="transfer-beta-retry")
+            with Horizontal(id="row-transfer-rollback-retry", classes="settings-row"):
+                yield Label("Số lần rollback lớp cũ:")
+                yield Input(value=str(Config.TRANSFER_ROLLBACK_RETRY_COUNT), id="transfer-rollback-retry")
+            with Horizontal(id="row-transfer-rollback-delay", classes="settings-row"):
+                yield Label("Delay rollback retry (giây):")
+                yield Input(value=str(Config.TRANSFER_ROLLBACK_RETRY_DELAY), id="transfer-rollback-delay")
+            yield Rule()
             yield Label("Debug", classes="set-section")
             with Horizontal(id="row-debug", classes="settings-row"):
                 yield ToggleSwitch(value=Config.DEBUG, id="debug")
@@ -3010,6 +3095,27 @@ class SettingsScreen(Screen):
         lead = self._parse_int("schedule-lead", "Schedule lead time", allow_zero=True)
         if lead is None:
             return
+        transfer_lead = self._parse_float("transfer-lead", "Transfer pre-burst lead")
+        if transfer_lead is None:
+            return
+        transfer_timeout = self._parse_float("transfer-timeout", "Transfer grab timeout")
+        if transfer_timeout is None:
+            return
+        transfer_beta_retry = self._parse_int(
+            "transfer-beta-retry", "Transfer beta retry", allow_zero=True
+        )
+        if transfer_beta_retry is None:
+            return
+        transfer_rollback_retry = self._parse_int(
+            "transfer-rollback-retry", "Transfer rollback retry", allow_zero=True
+        )
+        if transfer_rollback_retry is None:
+            return
+        transfer_rollback_delay = self._parse_float(
+            "transfer-rollback-delay", "Transfer rollback retry delay"
+        )
+        if transfer_rollback_delay is None:
+            return
 
         Config.AUTO_SNIFF_FALLBACK = auto_sniff
         Config.DEBUG = debug
@@ -3020,6 +3126,11 @@ class SettingsScreen(Screen):
         Config.SNIFF_MAX_DURATION_MIN = max_dur
         Config.SCHEDULE_ENABLED = schedule_enabled
         Config.SCHEDULE_LEAD_SECONDS = lead
+        Config.TRANSFER_PRE_BURST_LEAD = transfer_lead
+        Config.TRANSFER_GRAB_TIMEOUT = transfer_timeout
+        Config.TRANSFER_BETA_RETRY_COUNT = transfer_beta_retry
+        Config.TRANSFER_ROLLBACK_RETRY_COUNT = transfer_rollback_retry
+        Config.TRANSFER_ROLLBACK_RETRY_DELAY = transfer_rollback_delay
         try:
             Config.save_settings()
             self.notify("Đã lưu vào res/settings.json.", severity="information")

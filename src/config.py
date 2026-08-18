@@ -46,6 +46,9 @@ class Config:
     # trước khi bỏ cuộc + báo trạng thái cuối.
     TRANSFER_PRE_BURST_LEAD = float(os.getenv("TRANSFER_PRE_BURST_LEAD", 0.5))
     TRANSFER_GRAB_TIMEOUT = float(os.getenv("TRANSFER_GRAB_TIMEOUT", 10.0))
+    TRANSFER_BETA_RETRY_COUNT = int(os.getenv("TRANSFER_BETA_RETRY_COUNT", 1))
+    TRANSFER_ROLLBACK_RETRY_COUNT = int(os.getenv("TRANSFER_ROLLBACK_RETRY_COUNT", 3))
+    TRANSFER_ROLLBACK_RETRY_DELAY = float(os.getenv("TRANSFER_ROLLBACK_RETRY_DELAY", 0.3))
 
     # User-editable settings persisted to SETTINGS_FILE (subset of the above)
     _PERSIST_KEYS = (
@@ -60,6 +63,9 @@ class Config:
         "SCHEDULE_LEAD_SECONDS",
         "TRANSFER_PRE_BURST_LEAD",
         "TRANSFER_GRAB_TIMEOUT",
+        "TRANSFER_BETA_RETRY_COUNT",
+        "TRANSFER_ROLLBACK_RETRY_COUNT",
+        "TRANSFER_ROLLBACK_RETRY_DELAY",
         "DEBUG",
     )
     

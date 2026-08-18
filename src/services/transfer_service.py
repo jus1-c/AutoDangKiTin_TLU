@@ -13,7 +13,7 @@ Pre-burst: receiver bắt đầu bắn register TRƯỚC khi giver drop
 mở, giành trước người ngoài. Grab timeout `TRANSFER_GRAB_TIMEOUT` giây
 rồi bỏ cuộc + báo trạng thái cuối.
 
-RỦI RO β: sau khi drop cả 2 mà grab hụt (người ngoài nhanh hơn) →
+RỦI RO β / same-subject: sau khi drop cả 2 mà grab hụt (người ngoài nhanh hơn) →
 mất lớp không rollback. UI phải cảnh báo trước.
 """
 from __future__ import annotations
@@ -27,20 +27,11 @@ from src.models.course import Course
 from src.models.user import User
 from src.services.register_service import (
     RegisterService,
-    SUBJECT_LEVEL_ERRORS,
     status_label,
 )
 
 LogFn = Callable[[str], None]
 StopFn = Callable[[], bool]
-
-# Status đáng SPIN tiếp trong _grab_loop (ngữ cảnh transfer):
-# - -6 (lớp đầy): chờ slot mở khi giver drop.
-# - -2 (own-conflict TẠM THỜI trong swap β): còn giữ lớp cũ, sẽ hết sau drop.
-# Khác với ĐĂNG KÝ thường (ở đó -2 là trùng lịch cố định → bỏ lớp). Vì vậy
-# tập này ĐỊNH NGHĨA RIÊNG cho transfer, không tái dùng CLASS_LEVEL_ERRORS.
-# Gặp status ngoài tập này (vd -4 đã ĐK môn, hoặc lỗi lạ) → dừng grab sớm.
-GRAB_SPIN_STATUSES = {-2, -6}
 
 # Status mà _grab_loop VẪN spin tiếp (không dừng sớm):
 # - -6 (lớp đầy): chờ slot mở → đúng mục đích grab.
@@ -57,6 +48,23 @@ class TransferService:
     # ---------- Planning (phân loại lớp tick) ----------
 
     @staticmethod
+    def _same_subject(a: Course, b: Course) -> bool:
+        a_sid = a.data.get("subjectId")
+        b_sid = b.data.get("subjectId")
+        if a_sid is None or b_sid is None:
+            return False
+        return str(a_sid) == str(b_sid)
+
+    @staticmethod
+    def _course_looks_open(course: Course) -> bool:
+        """Best-effort from last course list; server status remains source of truth."""
+        if "isFullClass" in course.data:
+            return not bool(course.data.get("isFullClass"))
+        cur = course.current_students
+        max_students = course.max_students
+        return bool(max_students and cur < max_students)
+
+    @staticmethod
     def plan(
         a_gives: List[Course],
         a_enrolled: List[Course],
@@ -65,7 +73,9 @@ class TransferService:
     ) -> Dict[str, Any]:
         """Phân loại các lớp tick thành β pairs / simple gives / α-γ errors.
 
-        - β pair (X, Y): X ∈ a_gives trùng slot Y ∈ b_gives → swap cùng slot.
+        - β pair (X, Y): X ∈ a_gives trùng slot Y ∈ b_gives, hoặc cùng
+          subjectId → swap rủi ro. Cùng subjectId phải drop trước vì receiver
+          đang giữ môn cũ; register lớp mới thường trả -4.
         - α/γ error: X (A→B) trùng lịch lớp B GIỮ (không cho); hoặc Y (B→A)
           trùng lịch lớp A GIỮ. Nếu có error → CALLER không được thực thi.
         - simple give: còn lại.
@@ -84,22 +94,27 @@ class TransferService:
         matched_a: set = set()
         matched_b: set = set()
 
-        # β pairs: X (a_gives) trùng slot Y (b_gives).
+        # β pairs: X (a_gives) trùng slot hoặc cùng môn với Y (b_gives).
         for x in a_gives:
             for y in b_gives:
                 if id(y) in matched_b:
                     continue
-                if x.conflicts_with(y):
+                if x.conflicts_with(y) or TransferService._same_subject(x, y):
                     beta.append((x, y))
                     matched_a.add(id(x))
                     matched_b.add(id(y))
                     break
 
-        # α/γ error: lớp cho đi trùng lịch lớp bên nhận GIỮ lại.
+        # α/γ error: lớp cho đi trùng lịch hoặc cùng môn với lớp bên nhận GIỮ lại.
         for x in a_gives:
             if id(x) in matched_a:
                 continue
             for k in b_kept:
+                if TransferService._same_subject(x, k):
+                    errors.append(
+                        f"Lớp {x.code} (A→B) cùng môn với lớp {k.code} mà B đang giữ."
+                    )
+                    break
                 if x.conflicts_with(k):
                     errors.append(
                         f"Lớp {x.code} (A→B) trùng lịch lớp {k.code} mà B đang giữ."
@@ -109,6 +124,11 @@ class TransferService:
             if id(y) in matched_b:
                 continue
             for k in a_kept:
+                if TransferService._same_subject(y, k):
+                    errors.append(
+                        f"Lớp {y.code} (B→A) cùng môn với lớp {k.code} mà A đang giữ."
+                    )
+                    break
                 if y.conflicts_with(k):
                     errors.append(
                         f"Lớp {y.code} (B→A) trùng lịch lớp {k.code} mà A đang giữ."
@@ -136,6 +156,7 @@ class TransferService:
         count: int,
         on_log: LogFn,
         label: str,
+        spin_statuses: Optional[set] = None,
     ) -> Tuple[bool, Any]:
         """Bắn burst register liên tục tới khi status=0 hoặc hết timeout.
 
@@ -151,6 +172,7 @@ class TransferService:
         deadline = _time.monotonic() + timeout
         attempts = 0
         last_status: Any = None
+        keep_spinning = spin_statuses or GRAB_SPIN_STATUSES
         while _time.monotonic() < deadline:
             attempts += 1
             try:
@@ -166,7 +188,7 @@ class TransferService:
                 on_log(f"[GRAB {label}] ✓ CHỤP ĐƯỢC (sau {attempts} lượt burst).")
                 return True, 0
             # Dừng sớm nếu status không đáng spin (None=network cứ thử lại).
-            if status is not None and status not in GRAB_SPIN_STATUSES:
+            if status is not None and status not in keep_spinning:
                 on_log(
                     f"[GRAB {label}] ✗ DỪNG SỚM: {status_label(status)} "
                     f"(status={status}) — spin thêm vô nghĩa."
@@ -189,13 +211,60 @@ class TransferService:
         lead: float, timeout: float, count: int,
         on_log: LogFn,
     ) -> Dict[str, Any]:
-        """Giver drop lớp `course`, receiver pre-burst chụp.
+        """Transfer 1 chiều.
 
-        Receiver bắt đầu grab TRƯỚC (lead giây), rồi giver drop → slot mở →
-        receiver chụp. Nếu drop fail → hủy grab, giver giữ nguyên lớp.
+        Nếu dữ liệu gần nhất cho thấy lớp còn slot, receiver register TRƯỚC;
+        chỉ drop giver sau khi receiver đã giữ được lớp. Nếu server báo lớp đã
+        full (-6), fallback về pre-burst cũ: receiver grab trước, rồi giver drop.
         """
         code = course.code
         grab_url = receiver_user.register_url(receiver_pid)
+
+        if self._course_looks_open(course):
+            on_log(
+                f"[GIVE {code}] lớp đang còn slot "
+                f"({course.current_students}/{course.max_students}) — "
+                f"receiver đăng ký trước, chưa drop giver."
+            )
+            grabbed, grab_status = await receiver_reg._burst_request(
+                grab_url, course.data, count
+            )
+            if grabbed:
+                on_log(f"[GIVE {code}] receiver đăng ký OK — giver DROP lớp...")
+                drop_ok, drop_status = await giver_reg.drop_class(
+                    giver_user, giver_pid, course.data
+                )
+                if drop_ok:
+                    on_log(
+                        f"[GIVE {code}] ✓ HOÀN TẤT AN TOÀN: "
+                        f"receiver đã có lớp, giver đã nhả."
+                    )
+                else:
+                    on_log(
+                        f"[GIVE {code}] ⚠ receiver đã có lớp nhưng giver DROP fail "
+                        f"(status={drop_status}). Giver có thể vẫn giữ lớp."
+                    )
+                return {
+                    "code": code, "dropped": drop_ok, "grabbed": True,
+                    "drop_status": drop_status, "grab_status": 0,
+                    "safe_first": True,
+                }
+            if grab_status != -6:
+                on_log(
+                    f"[GIVE {code}] ✗ receiver đăng ký trước fail: "
+                    f"{status_label(grab_status)} (status={grab_status}). "
+                    f"KHÔNG drop giver."
+                )
+                return {
+                    "code": code, "dropped": False, "grabbed": False,
+                    "drop_status": None, "grab_status": grab_status,
+                    "safe_first": True,
+                }
+            on_log(
+                f"[GIVE {code}] server báo lớp đầy (status=-6) — "
+                f"fallback pre-burst rồi drop."
+            )
+
         on_log(f"[GIVE {code}] receiver pre-burst (lead {lead:.2f}s)...")
         grab_task = asyncio.create_task(
             self._grab_loop(receiver_reg, grab_url, course.data, timeout, count, on_log, code)
@@ -218,6 +287,7 @@ class TransferService:
             return {
                 "code": code, "dropped": False, "grabbed": False,
                 "drop_status": drop_status, "grab_status": None,
+                "safe_first": False,
             }
         on_log(f"[GIVE {code}] drop OK — chờ receiver chụp...")
         grabbed, grab_status = await grab_task
@@ -231,9 +301,64 @@ class TransferService:
         return {
             "code": code, "dropped": True, "grabbed": grabbed,
             "drop_status": 0, "grab_status": grab_status,
+            "safe_first": False,
         }
 
     # ---------- β swap cùng slot (drop-drop-grab-grab) ----------
+
+    @staticmethod
+    def _drop_result(value: Any) -> Tuple[bool, Any]:
+        if isinstance(value, tuple):
+            status = value[1] if len(value) > 1 else None
+            return bool(value[0]), status
+        if isinstance(value, Exception):
+            return False, type(value).__name__
+        return False, None
+
+    async def _cancel_grab_task(
+        self, task: asyncio.Task, on_log: LogFn, label: str,
+    ) -> Tuple[bool, Any]:
+        if not task.done():
+            task.cancel()
+        try:
+            return await task
+        except asyncio.CancelledError:
+            return False, None
+        except Exception as e:  # noqa: BLE001
+            on_log(f"[GRAB {label}] lỗi khi hủy task: {type(e).__name__}: {e}")
+            return False, None
+
+    async def _rollback_course(
+        self,
+        register: RegisterService, user: User, period_id: int, course: Course,
+        attempts: int, delay: float, count: int, on_log: LogFn, label: str,
+    ) -> Tuple[bool, Any]:
+        code = course.code
+        if attempts <= 0:
+            on_log(f"[ROLLBACK {label}] tắt rollback retry — KHÔNG thử đăng ký lại {code}.")
+            return False, None
+        url = user.register_url(period_id)
+        last_status: Any = None
+        for i in range(1, attempts + 1):
+            on_log(f"[ROLLBACK {label}] thử {i}/{attempts}: đăng ký lại {code}...")
+            try:
+                ok, status = await register._burst_request(url, course.data, count)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                ok, status = False, None
+                on_log(f"[ROLLBACK {label}] lỗi: {type(e).__name__}: {e}")
+            last_status = status
+            if ok:
+                on_log(f"[ROLLBACK {label}] ✓ đã đăng ký lại {code}.")
+                return True, 0
+            on_log(
+                f"[ROLLBACK {label}] fail: {status_label(status)} "
+                f"(status={status})."
+            )
+            if i < attempts and delay > 0:
+                await asyncio.sleep(delay)
+        return False, last_status
 
     async def swap_same_slot(
         self,
@@ -242,11 +367,11 @@ class TransferService:
         lead: float, timeout: float, count: int,
         on_log: LogFn,
     ) -> Dict[str, Any]:
-        """A giữ X muốn Y; B giữ Y muốn X; X,Y TRÙNG SLOT.
+        """A giữ X muốn Y; B giữ Y muốn X; X,Y trùng slot hoặc cùng môn.
 
-        Không pre-burst give thường được: A grab Y sẽ bị -2 (còn giữ X),
-        B grab X bị -2 (còn giữ Y). Phải:
-          1. A grab-Y ‖ B grab-X burst START (đều -2 lúc này).
+        Không pre-burst give thường được: A grab Y sẽ bị -2 (trùng lịch) hoặc
+        -4 (cùng môn); B grab X tương tự. Phải:
+          1. A grab-Y ‖ B grab-X burst START (đều -2/-4 lúc này).
           2. Sau lead: A drop X ‖ B drop Y (song song) → hết own-conflict.
           3. 2 grab đang chạy chụp được ngay.
 
@@ -254,48 +379,166 @@ class TransferService:
         (phải drop trước) → người ngoài có thể chụp. Grab hụt = mất lớp.
         """
         x_code, y_code = x_course.code, y_course.code
-        on_log(
-            f"[SWAP {x_code}↔{y_code}] pre-burst song song (lead {lead:.2f}s). "
-            f"⚠ Sẽ drop cả 2 trước khi giành lại."
-        )
-        grab_y_url = a_user.register_url(a_pid)   # A chụp Y
-        grab_x_url = b_user.register_url(b_pid)   # B chụp X
-        grab_y_task = asyncio.create_task(
-            self._grab_loop(a_reg, grab_y_url, y_course.data, timeout, count, on_log, f"A←{y_code}")
-        )
-        grab_x_task = asyncio.create_task(
-            self._grab_loop(b_reg, grab_x_url, x_course.data, timeout, count, on_log, f"B←{x_code}")
-        )
-        await asyncio.sleep(lead)
-        on_log(f"[SWAP {x_code}↔{y_code}] DROP cả 2 SONG SONG...")
-        drop_results = await asyncio.gather(
-            a_reg.drop_class(a_user, a_pid, x_course.data),
-            b_reg.drop_class(b_user, b_pid, y_course.data),
-            return_exceptions=True,
-        )
-        a_drop, b_drop = drop_results[0], drop_results[1]
-        a_drop_ok = isinstance(a_drop, tuple) and bool(a_drop[0])
-        b_drop_ok = isinstance(b_drop, tuple) and bool(b_drop[0])
-        on_log(
-            f"[SWAP {x_code}↔{y_code}] A drop X={a_drop_ok}, B drop Y={b_drop_ok}. "
-            f"Chờ 2 grab..."
-        )
-        grabbed_y, gy_status = await grab_y_task
-        grabbed_x, gx_status = await grab_x_task
-        if grabbed_x and grabbed_y:
-            on_log(f"[SWAP {x_code}↔{y_code}] ✓ HOÀN TẤT: A có {y_code}, B có {x_code}.")
-        else:
+        same_subject = self._same_subject(x_course, y_course)
+        spin_statuses = GRAB_SPIN_STATUSES | ({-4} if same_subject else set())
+        beta_retries = max(0, int(getattr(Config, "TRANSFER_BETA_RETRY_COUNT", 1)))
+        rollback_attempts = max(0, int(getattr(Config, "TRANSFER_ROLLBACK_RETRY_COUNT", 3)))
+        rollback_delay = max(0.0, float(getattr(Config, "TRANSFER_ROLLBACK_RETRY_DELAY", 0.3)))
+        max_attempts = 1 + beta_retries
+        last_result: Dict[str, Any] = {}
+
+        for attempt in range(1, max_attempts + 1):
             on_log(
-                f"[SWAP {x_code}↔{y_code}] ⚠ KHÔNG trọn vẹn: "
-                f"A chụp {y_code}={grabbed_y}, B chụp {x_code}={grabbed_x}. "
-                f"Kiểm tra lại — có thể 1 hoặc cả 2 lớp bị mất!"
+                f"[SWAP {x_code}↔{y_code}] attempt {attempt}/{max_attempts}: "
+                f"khởi động grab loop trước khi drop (lead {lead:.2f}s). "
+                f"⚠ Sẽ drop cả 2 trước khi giành lại."
             )
-        return {
-            "x_code": x_code, "y_code": y_code,
-            "a_dropped_x": a_drop_ok, "b_dropped_y": b_drop_ok,
-            "a_grabbed_y": grabbed_y, "b_grabbed_x": grabbed_x,
-            "grab_y_status": gy_status, "grab_x_status": gx_status,
-        }
+            grab_y_url = a_user.register_url(a_pid)   # A chụp Y
+            grab_x_url = b_user.register_url(b_pid)   # B chụp X
+            grab_y_task = asyncio.create_task(
+                self._grab_loop(
+                    a_reg, grab_y_url, y_course.data, timeout, count, on_log,
+                    f"A←{y_code}", spin_statuses,
+                )
+            )
+            grab_x_task = asyncio.create_task(
+                self._grab_loop(
+                    b_reg, grab_x_url, x_course.data, timeout, count, on_log,
+                    f"B←{x_code}", spin_statuses,
+                )
+            )
+            await asyncio.sleep(lead)
+            on_log(f"[SWAP {x_code}↔{y_code}] DROP cả 2 SONG SONG...")
+            drop_results = await asyncio.gather(
+                a_reg.drop_class(a_user, a_pid, x_course.data),
+                b_reg.drop_class(b_user, b_pid, y_course.data),
+                return_exceptions=True,
+            )
+            a_drop_ok, a_drop_status = self._drop_result(drop_results[0])
+            b_drop_ok, b_drop_status = self._drop_result(drop_results[1])
+            on_log(
+                f"[SWAP {x_code}↔{y_code}] A drop X={a_drop_ok} "
+                f"(status={a_drop_status}), B drop Y={b_drop_ok} "
+                f"(status={b_drop_status})."
+            )
+
+            base_result: Dict[str, Any] = {
+                "x_code": x_code, "y_code": y_code,
+                "attempt": attempt,
+                "a_dropped_x": a_drop_ok, "b_dropped_y": b_drop_ok,
+                "a_drop_status": a_drop_status, "b_drop_status": b_drop_status,
+                "a_grabbed_y": False, "b_grabbed_x": False,
+                "grab_y_status": None, "grab_x_status": None,
+                "a_rollback_x": None, "b_rollback_y": None,
+                "a_rollback_status": None, "b_rollback_status": None,
+                "retried": attempt > 1,
+            }
+
+            if a_drop_ok and b_drop_ok:
+                on_log(f"[SWAP {x_code}↔{y_code}] drop OK cả 2 — chờ 2 grab...")
+                grabbed_y, gy_status = await grab_y_task
+                grabbed_x, gx_status = await grab_x_task
+                base_result.update({
+                    "a_grabbed_y": grabbed_y,
+                    "b_grabbed_x": grabbed_x,
+                    "grab_y_status": gy_status,
+                    "grab_x_status": gx_status,
+                })
+                if grabbed_x and grabbed_y:
+                    on_log(f"[SWAP {x_code}↔{y_code}] ✓ HOÀN TẤT: A có {y_code}, B có {x_code}.")
+                else:
+                    on_log(
+                        f"[SWAP {x_code}↔{y_code}] ⚠ KHÔNG trọn vẹn: "
+                        f"A chụp {y_code}={grabbed_y}, B chụp {x_code}={grabbed_x}. "
+                        f"Kiểm tra lại — có thể 1 hoặc cả 2 lớp bị mất!"
+                    )
+                return base_result
+
+            grabbed_y, gy_status = await self._cancel_grab_task(
+                grab_y_task, on_log, f"A←{y_code}",
+            )
+            grabbed_x, gx_status = await self._cancel_grab_task(
+                grab_x_task, on_log, f"B←{x_code}",
+            )
+            base_result.update({
+                "a_grabbed_y": grabbed_y,
+                "b_grabbed_x": grabbed_x,
+                "grab_y_status": gy_status,
+                "grab_x_status": gx_status,
+            })
+
+            if not a_drop_ok and not b_drop_ok:
+                on_log(
+                    f"[SWAP {x_code}↔{y_code}] cả 2 drop fail — đã hủy grab, "
+                    f"trạng thái gần như chưa đổi."
+                )
+                last_result = base_result
+                if attempt < max_attempts:
+                    on_log(f"[SWAP {x_code}↔{y_code}] thử lại beta...")
+                    continue
+                return base_result
+
+            if a_drop_ok and not b_drop_ok:
+                if grabbed_y:
+                    on_log(
+                        f"[SWAP {x_code}↔{y_code}] A đã chụp {y_code}; "
+                        f"không rollback tự động để tránh phá trạng thái mới."
+                    )
+                    return base_result
+                on_log(
+                    f"[SWAP {x_code}↔{y_code}] partial drop: A đã nhả {x_code}, "
+                    f"B drop {y_code} fail — rollback A về {x_code}."
+                )
+                rb_ok, rb_status = await self._rollback_course(
+                    a_reg, a_user, a_pid, x_course, rollback_attempts,
+                    rollback_delay, count, on_log, f"A→{x_code}",
+                )
+                base_result.update({
+                    "a_rollback_x": rb_ok,
+                    "a_rollback_status": rb_status,
+                })
+                if rb_ok and attempt < max_attempts:
+                    on_log(f"[SWAP {x_code}↔{y_code}] rollback OK — thử lại beta...")
+                    last_result = base_result
+                    continue
+                if not rb_ok:
+                    on_log(
+                        f"[SWAP {x_code}↔{y_code}] ⚠ rollback A fail — "
+                        f"A có thể mất {x_code}. Dừng retry."
+                    )
+                return base_result
+
+            if b_drop_ok and not a_drop_ok:
+                if grabbed_x:
+                    on_log(
+                        f"[SWAP {x_code}↔{y_code}] B đã chụp {x_code}; "
+                        f"không rollback tự động để tránh phá trạng thái mới."
+                    )
+                    return base_result
+                on_log(
+                    f"[SWAP {x_code}↔{y_code}] partial drop: B đã nhả {y_code}, "
+                    f"A drop {x_code} fail — rollback B về {y_code}."
+                )
+                rb_ok, rb_status = await self._rollback_course(
+                    b_reg, b_user, b_pid, y_course, rollback_attempts,
+                    rollback_delay, count, on_log, f"B→{y_code}",
+                )
+                base_result.update({
+                    "b_rollback_y": rb_ok,
+                    "b_rollback_status": rb_status,
+                })
+                if rb_ok and attempt < max_attempts:
+                    on_log(f"[SWAP {x_code}↔{y_code}] rollback OK — thử lại beta...")
+                    last_result = base_result
+                    continue
+                if not rb_ok:
+                    on_log(
+                        f"[SWAP {x_code}↔{y_code}] ⚠ rollback B fail — "
+                        f"B có thể mất {y_code}. Dừng retry."
+                    )
+                return base_result
+
+        return last_result
 
     # ---------- Orchestrator ----------
 
