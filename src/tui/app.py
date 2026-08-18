@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from datetime import datetime
 import json
 import os
 import sys
 from typing import Any, Awaitable, Callable, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from rich.text import Text as RichText
 from textual.app import App, ComposeResult
@@ -66,6 +68,57 @@ from src.services.multireg_service import (
 )
 from src.services.register_service import RegisterService
 from src.services.transfer_service import TransferService
+
+
+def _period_year(period: Dict[str, Any]) -> str:
+    if period.get("_year"):
+        return str(period["_year"])
+    semester = period.get("semester") or {}
+    return str(
+        semester.get("semesterName")
+        or semester.get("semesterCode")
+        or period.get("name")
+        or "Khác"
+    )
+
+
+def _default_periods(user: User) -> List[Dict[str, Any]]:
+    """Immediate combobox values matching the pre-combobox behavior."""
+    periods = []
+    if user.semester_id is not None:
+        periods.append({
+            "id": user.semester_id,
+            "name": "Học kỳ chính (mặc định)",
+            "_year": "Mặc định",
+        })
+    if user.semester_summer_id is not None:
+        periods.append({
+            "id": user.semester_summer_id,
+            "name": "Học kỳ hè (mặc định)",
+            "_year": "Mặc định",
+        })
+    return periods
+
+
+def _period_label(period: Dict[str, Any]) -> str:
+    return str(period["name"])
+
+
+def _year_label(year: str) -> str:
+    return year
+
+
+def _registration_window_text(meta: Dict[str, Any]) -> str:
+    start, end = meta.get("startDate"), meta.get("endDate")
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+        return "Thời gian đăng ký: không có dữ liệu."
+    tz = ZoneInfo("Asia/Ho_Chi_Minh")
+    fmt = "%H:%M %d/%m/%Y"
+    return (
+        "Thời gian đăng ký: "
+        f"{datetime.fromtimestamp(start / 1000, tz).strftime(fmt)} → "
+        f"{datetime.fromtimestamp(end / 1000, tz).strftime(fmt)}"
+    )
 
 
 # ---------- stdout capture ----------
@@ -762,27 +815,89 @@ class RegisterScreen(Screen):
         self.services = services
         self.courses: List[List[Course]] = []
         self._course_names: List[str] = []
+        self._periods = _default_periods(user)
+        self._loaded_period_id: Optional[int] = None
 
     def compose(self) -> ComposeResult:
+        default_period_options = [
+            (_period_label(period), str(period["id"])) for period in self._periods
+        ] or [("Không có kỳ", "")]
+        default_period_value = str(self.user.semester_id or "")
         yield Header()
         container = Container(id="reg-container")
         container.border_title = "ĐĂNG KÝ NHANH"
         with container:
             with Horizontal(id="reg-toolbar"):
-                yield ToggleSwitch(id="summer", value=False)
-                yield Label("Học kỳ hè")
+                yield Label("Semester")
+                yield Select(
+                    [("Mặc định", "Mặc định")],
+                    value="Mặc định", id="reg-year",
+                )
+                yield Label("Học kỳ")
+                yield Select(
+                    default_period_options, value=default_period_value, id="reg-period",
+                )
                 yield Button("Tải danh sách môn", id="load", variant="primary")
             with Horizontal(id="reg-toolbar2"):
                 yield Button("Chọn tất cả", id="select-all")
                 yield Button("Bỏ chọn", id="deselect-all")
                 yield Button("Đăng ký môn đã chọn", id="run", variant="success")
                 yield Button("Quay lại", id="back")
+                yield Label("Thời gian đăng ký: chưa tải.", id="reg-registration-window")
             yield Input(placeholder="Tìm tên hoặc mã môn...", id="reg-search")
             yield SelectionList[int](id="reg-selection")
         yield Footer()
 
-    def _is_summer(self) -> bool:
-        return self.query_one("#summer", ToggleSwitch).value
+    def on_mount(self) -> None:
+        self.run_worker(self._load_periods(), exclusive=False)
+
+    async def _load_periods(self) -> None:
+        try:
+            periods = await self.services["course"].get_registration_periods()
+        except Exception as e:  # noqa: BLE001
+            self.notify(f"Không tải được danh sách học kỳ: {e}", severity="error")
+            return
+        if not periods:
+            return
+        self._periods = sorted(
+            periods,
+            key=lambda period: (period.get("semester") or {}).get("startDate") or 0,
+            reverse=True,
+        )
+        years = list(dict.fromkeys(_period_year(period) for period in self._periods))
+        year_select = self.query_one("#reg-year", Select)
+        year_select.set_options([
+            (_year_label(year), year)
+            for year in years
+        ] or [("Không có kỳ", "")])
+        current = next(
+            (period for period in self._periods if period.get("id") == self.user.semester_id),
+            self._periods[0] if self._periods else None,
+        )
+        if current is not None:
+            year_select.value = _period_year(current)
+            self._set_period_options(_period_year(current), current.get("id"))
+
+    def _set_period_options(self, year: str, selected_id: Optional[int] = None) -> None:
+        periods = [period for period in self._periods if _period_year(period) == year]
+        period_select = self.query_one("#reg-period", Select)
+        options = [(_period_label(period), str(period["id"])) for period in periods]
+        period_select.set_options(options or [("Không có kỳ", "")])
+        if selected_id is not None:
+            selected = str(selected_id)
+            if any(value == selected for _, value in options):
+                period_select.value = selected
+
+    def _selected_period_id(self) -> Optional[int]:
+        value = self.query_one("#reg-period", Select).value
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "reg-year" and self._periods:
+            self._set_period_options(str(event.value))
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
@@ -806,10 +921,19 @@ class RegisterScreen(Screen):
 
     async def _load_courses(self) -> None:
         self.courses = []
-        is_summer = self._is_summer()
+        if not self._periods:
+            await self._load_periods()
+        period_id = self._selected_period_id()
+        if period_id is None:
+            self.notify("Chưa chọn học kỳ.", severity="warning")
+            return
         try:
             self.courses, self._course_names = await self.services["course"].fetch_courses(
-                self.user, is_summer
+                self.user, semester_id=period_id
+            )
+            self._loaded_period_id = period_id
+            self.query_one("#reg-registration-window", Label).update(
+                _registration_window_text(self.services["course"].last_meta)
             )
             self._refresh_selection()
         except Exception as e:  # noqa: BLE001
@@ -840,7 +964,8 @@ class RegisterScreen(Screen):
     async def _run_register(self) -> None:
         sel: SelectionList = self.query_one(SelectionList)
         indices = list(sel.selected)
-        if not indices or not self.courses:
+        period_id = self._loaded_period_id
+        if not indices or not self.courses or period_id is None:
             self.notify("Chưa chọn môn hoặc chưa tải dữ liệu.", severity="warning")
             return
 
@@ -866,7 +991,6 @@ class RegisterScreen(Screen):
                 course_to_key[id(course)] = key
         async def _work(ctx: LogCaptureContext):
             register: RegisterService = self.services["register"]
-            is_summer = self._is_summer()
 
             def on_start(idx: int, course) -> None:
                 key = f"subj_{idx}"
@@ -883,7 +1007,7 @@ class RegisterScreen(Screen):
 
             try:
                 failed = await register.register_subjects(
-                    self.user, indices, self.courses, is_summer,
+                    self.user, indices, self.courses, semester_id=period_id,
                     on_start=on_start, on_progress=on_progress,
                 )
                 if failed and Config.AUTO_SNIFF_FALLBACK and not ctx.should_stop():
@@ -896,7 +1020,7 @@ class RegisterScreen(Screen):
                     sniff_failed = await register.sniffing_loop(
                         self.user,
                         failed,
-                        is_summer,
+                        semester_id=period_id,
                         interval=Config.SNIFF_INTERVAL,
                         jitter=Config.SNIFF_JITTER,
                         max_duration_min=Config.SNIFF_MAX_DURATION_MIN,
@@ -920,7 +1044,7 @@ class RegisterScreen(Screen):
                 ctx.log(f"[ERROR] {e}")
 
         _push_register_flow(
-            self.app, self, self.user, self.services, self._is_summer(),
+            self.app, self, self.user, self.services, semester_id=period_id,
             log_title="Đăng ký nhanh", status_rows=status_rows,
             work_factory=_work,
         )
@@ -1169,20 +1293,34 @@ class CustomBuilderScreen(Screen):
         self.names: List[str] = []
         self.picks: Dict[int, Course] = {}
         self._visible_subject_indices: List[int] = []
+        self._periods = _default_periods(user)
+        self._loaded_period_id: Optional[int] = None
 
     def compose(self) -> ComposeResult:
+        default_period_options = [
+            (_period_label(period), str(period["id"])) for period in self._periods
+        ] or [("Không có kỳ", "")]
+        default_period_value = str(self.user.semester_id or "")
         yield Header()
         container = Container()
         container.border_title = "TẠO DANH SÁCH CUSTOM"
         with container:
             with Horizontal(id="builder-toolbar"):
-                yield ToggleSwitch(id="summer", value=False)
-                yield Label("Học kỳ hè")
+                yield Label("Semester")
+                yield Select(
+                    [("Mặc định", "Mặc định")],
+                    value="Mặc định", id="builder-year",
+                )
+                yield Label("Học kỳ")
+                yield Select(
+                    default_period_options, value=default_period_value, id="builder-period",
+                )
                 yield Button("Tải môn", id="load", variant="primary")
             with Horizontal(id="builder-toolbar2"):
                 yield Button("Chọn lớp (subject đang trỏ)", id="pick", variant="warning")
                 yield Button("Bỏ chọn lớp", id="clear-pick", variant="error")
                 yield Button("Quay lại", id="back")
+                yield Label("Thời gian đăng ký: chưa tải.", id="builder-registration-window")
             yield Input(placeholder="Tìm tên hoặc mã môn...", id="builder-search")
             yield DataTable(id="builder-table", zebra_stripes=True, cursor_type="row")
             with Horizontal(id="builder-save-row"):
@@ -1195,9 +1333,55 @@ class CustomBuilderScreen(Screen):
         table.add_columns("STT", "Tên môn", "Lớp đã chọn", "Sĩ số")
         # Focus table so Enter/dblclick work without an extra click.
         self.call_after_refresh(table.focus)
+        self.run_worker(self._load_periods(), exclusive=False)
 
-    def _is_summer(self) -> bool:
-        return self.query_one("#summer", ToggleSwitch).value
+    async def _load_periods(self) -> None:
+        try:
+            periods = await self.services["course"].get_registration_periods()
+        except Exception as e:  # noqa: BLE001
+            self.notify(f"Không tải được danh sách học kỳ: {e}", severity="error")
+            return
+        if not periods:
+            return
+        self._periods = sorted(
+            periods,
+            key=lambda period: (period.get("semester") or {}).get("startDate") or 0,
+            reverse=True,
+        )
+        years = list(dict.fromkeys(_period_year(period) for period in self._periods))
+        year_select = self.query_one("#builder-year", Select)
+        year_select.set_options([
+            (_year_label(year), year)
+            for year in years
+        ] or [("Không có kỳ", "")])
+        current = next(
+            (period for period in self._periods if period.get("id") == self.user.semester_id),
+            self._periods[0] if self._periods else None,
+        )
+        if current is not None:
+            year_select.value = _period_year(current)
+            self._set_period_options(_period_year(current), current.get("id"))
+
+    def _set_period_options(self, year: str, selected_id: Optional[int] = None) -> None:
+        periods = [period for period in self._periods if _period_year(period) == year]
+        period_select = self.query_one("#builder-period", Select)
+        options = [(_period_label(period), str(period["id"])) for period in periods]
+        period_select.set_options(options or [("Không có kỳ", "")])
+        if selected_id is not None:
+            selected = str(selected_id)
+            if any(value == selected for _, value in options):
+                period_select.value = selected
+
+    def _selected_period_id(self) -> Optional[int]:
+        value = self.query_one("#builder-period", Select).value
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "builder-year" and self._periods:
+            self._set_period_options(str(event.value))
 
     def on_data_table_row_activated(self, event) -> None:
         """Double-click on a row → open the class picker for that subject."""
@@ -1234,9 +1418,19 @@ class CustomBuilderScreen(Screen):
 
     async def _load_courses(self) -> None:
         self.picks.clear()
+        if not self._periods:
+            await self._load_periods()
+        period_id = self._selected_period_id()
+        if period_id is None:
+            self.notify("Chưa chọn học kỳ.", severity="warning")
+            return
         try:
             self.courses, self.names = await self.services["course"].fetch_courses(
-                self.user, self._is_summer()
+                self.user, semester_id=period_id
+            )
+            self._loaded_period_id = period_id
+            self.query_one("#builder-registration-window", Label).update(
+                _registration_window_text(self.services["course"].last_meta)
             )
             self._refresh_table()
         except Exception as e:  # noqa: BLE001
@@ -1337,14 +1531,13 @@ class CustomBuilderScreen(Screen):
             self.notify("Chưa chọn lớp nào.", severity="warning")
             return
         name = self.query_one("#save-name", Input).value
-        # Lưu kèm semester_id tương ứng với toggle HK hè đang bật, để
-        # khi load profile biết đăng ký cho HK nào.
-        is_summer = self._is_summer()
-        sem_id = self.user.semester_summer_id if is_summer else self.user.semester_id
+        sem_id = self._loaded_period_id
+        if sem_id is None:
+            self.notify("Chưa chọn học kỳ.", severity="warning")
+            return
         filename = self.custom.save_named(list(self.picks.values()), name,
                                          semester_id=sem_id)
-        hk = "HK hè" if is_summer else "HK chính"
-        self.notify(f"Đã lưu: {filename} ({hk})", severity="information")
+        self.notify(f"Đã lưu: {filename} (kỳ {sem_id})", severity="information")
         self.query_one("#save-name", Input).value = ""
 
 
@@ -1468,26 +1661,12 @@ class ProfileScreen(Screen):
             self.notify(f"Lỗi đọc file: {e}", severity="error")
             return
 
-        # Decide which semester to register into:
-        # - If the profile saved a semester_id, use it.
-        # - If no saved id (legacy file), use the current user's main semester.
-        # - If saved id doesn't match any known semester, use the closest.
-        if saved_sem_id == self.user.semester_summer_id:
-            is_summer = True
-        elif saved_sem_id == self.user.semester_id:
-            is_summer = False
-        elif saved_sem_id is None:
-            is_summer = False
-        else:
-            # Unknown id — fall back to main and warn
-            self.notify(
-                f"⚠ Profile lưu semester_id={saved_sem_id} (không phải HK hiện tại). "
-                f"Mặc định dùng HK chính.",
-                severity="warning",
-            )
-            is_summer = False
         active_sem_id = saved_sem_id if saved_sem_id is not None else self.user.semester_id
-        hk_label = "HK hè" if is_summer else "HK chính"
+        hk_label = (
+            "HK hè" if active_sem_id == self.user.semester_summer_id
+            else "HK chính" if active_sem_id == self.user.semester_id
+            else f"kỳ {active_sem_id}"
+        )
         self.notify(
             f"Đang đăng ký profile: {key} ({hk_label}, id={active_sem_id})",
             severity="information",
@@ -1532,7 +1711,7 @@ class ProfileScreen(Screen):
                     sniff_failed = await register.sniffing_loop(
                         self.user,
                         failed,
-                        is_summer=is_summer,
+                        semester_id=active_sem_id,
                         interval=Config.SNIFF_INTERVAL,
                         jitter=Config.SNIFF_JITTER,
                         max_duration_min=Config.SNIFF_MAX_DURATION_MIN,
@@ -1560,7 +1739,7 @@ class ProfileScreen(Screen):
                 ctx.log(f"[ERROR] {e}")
 
         _push_register_flow(
-            self.app, self, self.user, self.services, is_summer,
+            self.app, self, self.user, self.services, semester_id=active_sem_id,
             log_title=log_screen_title, status_rows=status_rows,
             work_factory=_work,
         )
@@ -2648,6 +2827,7 @@ def _push_register_flow(
     user: Optional[User] = None,
     services: Optional[dict] = None,
     is_summer: bool = False,
+    semester_id: Optional[int] = None,
     log_title: str = "Logs",
     status_rows: Optional[List[Dict[str, Any]]] = None,
     work_factory: Optional[Callable[[LogCaptureContext, "TLUApp"], Awaitable[Any]]] = None,
@@ -2691,7 +2871,7 @@ def _push_register_flow(
         course_svc: CourseService = services.get("course")
         try:
             target_ms = (
-                await course_svc.get_registration_start(user, is_summer)
+                await course_svc.get_registration_start(user, is_summer, semester_id)
                 if course_svc is not None
                 else None
             )
@@ -3517,15 +3697,22 @@ class TLUApp(App):
     #builder-toolbar2 Button, #multireg-toolbar Button {
         margin: 0 1;
     }
-    /* Toggle + label trong toolbar hàng 1 — switch/label cao 1, nút cao 3.
-       align-vertical:middle không đẩy được vì nút đã lấp đầy container.
-       Dùng margin-top:1 đẩy switch+label xuống dòng giữa (y=2) khớp text nút. */
     #reg-toolbar Label, #builder-toolbar Label {
         margin-top: 1;
         padding: 0 1 0 0;
     }
-    #reg-toolbar ToggleSwitch, #builder-toolbar ToggleSwitch {
+    #reg-toolbar Select, #builder-toolbar Select {
+        width: 1fr;
+        margin: 0 1;
+    }
+    #reg-toolbar2 Label, #builder-toolbar2 Label {
+        width: 1fr;
+        text-align: right;
         margin-top: 1;
+    }
+    #reg-registration-window, #builder-registration-window {
+        color: #a5adcb;
+        padding: 0 0 0 1;
     }
     #builder-save-row {
         height: auto;

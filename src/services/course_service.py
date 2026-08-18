@@ -12,16 +12,15 @@ class CourseService:
         self.last_meta = {} # Lưu trữ metadata
 
     async def _try_fetch_period(
-        self, user: User, is_summer: bool, filepath: str
+        self, user: User, period_id: int, filepath: str
     ) -> tuple:
         """Try to fetch courses for the current user.semester_id / summer_id.
 
         Returns (data, status_code) on API response, (None, None) on network
         error. Caller decides what to do with the result.
         """
-        sem_id = user.semester_summer_id if is_summer else user.semester_id
-        url = user.course_url(sem_id)
-        print(f"[INFO]   Try semester_id={sem_id} → {url}")
+        url = user.course_url(period_id)
+        print(f"[INFO]   Try semester_id={period_id} → {url}")
         try:
             response = await self.client.request("GET", url)
         except Exception as e:
@@ -35,7 +34,7 @@ class CourseService:
             try:
                 data = response.json()
             except Exception as e:
-                print(f"[WARNING]   semester_id={sem_id} 200 nhưng body không phải JSON: {e}")
+                print(f"[WARNING]   semester_id={period_id} 200 nhưng body không phải JSON: {e}")
                 return None, response.status_code
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -48,18 +47,20 @@ class CourseService:
                 server_msg = err_body.get("message") or err_body.get("error") or ""
         except Exception:
             server_msg = (response.text or "")[:200]
-        print(f"[WARNING]   semester_id={sem_id} failed ({response.status_code}): {server_msg or response.reason_phrase}")
+        print(f"[WARNING]   semester_id={period_id} failed ({response.status_code}): {server_msg or response.reason_phrase}")
         return None, response.status_code
 
     async def get_registration_start(
-        self, user: User, is_summer: bool = False
+        self, user: User, is_summer: bool = False, semester_id: Optional[int] = None,
     ) -> Optional[int]:
         """Fetch the registration period start (ms epoch) from the API.
 
         This is the time the registration window OPENS (fetched fresh
         each call, not cached). Returns None on network/parse error.
         """
-        sem_id = user.semester_summer_id if is_summer else user.semester_id
+        sem_id = semester_id if semester_id is not None else (
+            user.semester_summer_id if is_summer else user.semester_id
+        )
         url = user.course_url(sem_id)
         try:
             response = await self.client.request("GET", url)
@@ -74,7 +75,21 @@ class CourseService:
             print(f"[WARN] get_registration_start: {e}")
         return None
 
-    async def fetch_courses(self, user: User, is_summer: bool = False) -> Tuple[List[List[Course]], List[str]]:
+    async def get_registration_periods(self) -> List[Dict[str, Any]]:
+        """Return every registration period across every semester."""
+        periods = []
+        for semester in await self.client.get_semesters_with_periods():
+            for period in semester.get("semesterRegisterPeriods") or []:
+                if period.get("id") is None or not period.get("name"):
+                    continue
+                period = dict(period)
+                period["semester"] = semester
+                periods.append(period)
+        return periods
+
+    async def fetch_courses(
+        self, user: User, is_summer: bool = False, semester_id: Optional[int] = None,
+    ) -> Tuple[List[List[Course]], List[str]]:
         """
         Fetches courses from API.
         Returns a tuple: (List of Course Lists (grouped by subject), List of Subject Names)
@@ -82,19 +97,22 @@ class CourseService:
         If the primary semester_id fails, automatically tries every other
         period from semesterRegisterPeriods until one works (auto-fix).
         """
-        filename = "all_course_summer.json" if is_summer else "all_course.json"
+        filename = (
+            f"all_course_{semester_id}.json" if semester_id is not None
+            else ("all_course_summer.json" if is_summer else "all_course.json")
+        )
         filepath = os.path.join(Config.RES_DIR, filename)
 
-        original_id = (
+        original_id = semester_id if semester_id is not None else (
             user.semester_summer_id if is_summer else user.semester_id
         )
         print(f"[INFO] Fetching courses (summer={is_summer}, original_id={original_id})")
 
         # Try the primary ID first
-        data, _ = await self._try_fetch_period(user, is_summer, filepath)
+        data, _ = await self._try_fetch_period(user, original_id, filepath)
 
         # If primary failed, fall back to trying every other period
-        if data is None and self.client is not None:
+        if data is None and semester_id is None and self.client is not None:
             try:
                 semester_info = await self.client.get_semester_info()
                 periods = semester_info.get("semesterRegisterPeriods", [])
@@ -118,12 +136,12 @@ class CourseService:
                         continue
                     if not is_summer and pid == user.semester_summer_id:
                         continue
-                    if is_summer:
-                        user.semester_summer_id = pid
-                    else:
-                        user.semester_id = pid
-                    data, _ = await self._try_fetch_period(user, is_summer, filepath)
+                    data, _ = await self._try_fetch_period(user, pid, filepath)
                     if data is not None:
+                        if is_summer:
+                            user.semester_summer_id = pid
+                        else:
+                            user.semester_id = pid
                         print(
                             f"[INFO] Auto-fixed: {('semester_summer_id' if is_summer else 'semester_id')} "
                             f"{original_id} → {pid} (data returned)"

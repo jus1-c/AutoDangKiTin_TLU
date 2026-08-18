@@ -3,7 +3,7 @@ import json
 import urllib.parse
 import os
 import asyncio
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 from src.config import Config
 from src.core.exceptions import LoginError, NetworkError, SessionExpiredError
 
@@ -149,7 +149,16 @@ class TLUClient:
             return response.json()
         except httpx.RequestError as e:
             raise NetworkError(f"Connection failed: {e}")
-            
+
+    async def get_semesters_with_periods(self) -> List[Dict[str, Any]]:
+        """Return every semester with its registration periods (read-only)."""
+        url = f"{Config.TLU_API_BASE_URL.rstrip('/')}/semester/getwithfullsub"
+        response = await self.request("GET", url)
+        if response.status_code != 200:
+            raise NetworkError(f"Failed to get semesters: {response.status_code}")
+        data = response.json()
+        return data if isinstance(data, list) else []
+             
     async def request(self, method: str, url: str, **kwargs):
         req_headers = kwargs.get('headers', {})
         req_headers.update(self.headers)

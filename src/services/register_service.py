@@ -47,7 +47,7 @@ class RegisterService:
         self._semaphore_limit = Config.CONCURRENCY_LIMIT
         self.semaphore = asyncio.Semaphore(self._semaphore_limit)
 
-    async def register_subjects(self, user: User, subject_indices: List[int], all_courses: List[List[Course]], is_summer: bool = False, on_progress: Optional[LogFn] = None, on_start: Optional[LogFn] = None) -> List[Course]:
+    async def register_subjects(self, user: User, subject_indices: List[int], all_courses: List[List[Course]], is_summer: bool = False, semester_id: Optional[int] = None, on_progress: Optional[LogFn] = None, on_start: Optional[LogFn] = None) -> List[Course]:
         """
         Registers for multiple subjects. Returns list of failed courses.
 
@@ -56,7 +56,10 @@ class RegisterService:
         `on_start(idx, course)` is called BEFORE the burst for each
         subject so the UI can show a 'sending' state.
         """
-        url = user.register_url(user.semester_summer_id if is_summer else user.semester_id)
+        semester_id = semester_id if semester_id is not None else (
+            user.semester_summer_id if is_summer else user.semester_id
+        )
+        url = user.register_url(semester_id)
 
         tasks = []
         subject_info = []  # (idx, first_course) for progress reporting
@@ -477,6 +480,7 @@ class RegisterService:
         user: User,
         courses: List[Course],
         is_summer: bool = False,
+        semester_id: Optional[int] = None,
         interval: float = 2.0,
         jitter: float = 0.5,
         max_duration_min: Optional[int] = None,
@@ -521,8 +525,11 @@ class RegisterService:
             log("Không có môn nào để săn.")
             return []
 
-        list_url = user.course_url(user.semester_summer_id if is_summer else user.semester_id)
-        register_url = user.register_url(user.semester_summer_id if is_summer else user.semester_id)
+        semester_id = semester_id if semester_id is not None else (
+            user.semester_summer_id if is_summer else user.semester_id
+        )
+        list_url = user.course_url(semester_id)
+        register_url = user.register_url(semester_id)
 
         targets: List[Course] = list(courses)
         start_ts = _time.monotonic()
