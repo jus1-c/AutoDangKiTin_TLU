@@ -454,6 +454,9 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
                 with Horizontal(id="continuous-login-row", classes="opt-row"):
                     yield ToggleSwitch(value=False, id="continuous-login")
                     yield Label("Bắn login liên tục đến khi có token")
+                with Horizontal(id="retry-invalid-login-row", classes="opt-row"):
+                    yield ToggleSwitch(value=False, id="retry-invalid-login")
+                    yield Label("Tiếp tục khi response login chưa hợp lệ")
             yield RichLog(
                 id="login-log",
                 highlight=True,
@@ -498,6 +501,7 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
             return
         offline = self.query_one("#offline-mode", ToggleSwitch).value
         continuous = self.query_one("#continuous-login", ToggleSwitch).value
+        retry_invalid = self.query_one("#retry-invalid-login", ToggleSwitch).value
         err = self.query_one("#login-log", RichLog)
         self.query_one("#login-btn", Button).disabled = True
         try:
@@ -505,14 +509,14 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
                 # Offline ưu tiên cao hơn continuous (offline = 0 API call).
                 await self._attempt_offline_login()
             elif continuous:
-                await self._attempt_continuous_login()
+                await self._attempt_continuous_login(retry_invalid=retry_invalid)
             else:
                 await self._attempt_online_login()
         except Exception as e:  # noqa: BLE001
             err.write(f"Lỗi: {e}")
             self.query_one("#login-btn", Button).disabled = False
 
-    async def _attempt_continuous_login(self) -> None:
+    async def _attempt_continuous_login(self, retry_invalid: bool = False) -> None:
         """Bắn request login liên tục cho đến khi thành công / user hủy /
         hết thời gian. Click "Thoát" giữa chừng sẽ set cancel event.
         Log progress vào RichLog — mỗi attempt 1 dòng, auto-scroll.
@@ -572,6 +576,7 @@ class LoginScreen(ModalScreen[Optional[Dict[str, Any]]]):
                     save=save,
                     on_progress=_do_on_progress,
                     should_stop=lambda: self._cancel_event.is_set(),
+                    retry_invalid=retry_invalid,
                 )
                 # call_later tự await return value của callback. Nếu
                 # callback return AwaitComplete (từ dismiss()), Textual

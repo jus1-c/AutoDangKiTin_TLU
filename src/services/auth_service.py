@@ -371,15 +371,16 @@ class AuthService:
         on_progress: Optional[LoginProgressFn] = None,
         should_stop: Optional[StopFn] = None,
         max_duration_min: Optional[int] = None,
+        retry_invalid: bool = False,
     ) -> User:
         """Bắn request login liên tục cho đến khi thành công, user hủy,
         hoặc hết thời gian. Dùng khi server TLU quá tải (giờ cao điểm
         đăng ký) — login endpoint thường xuyên timeout/503 trong vài phút
         đầu mở đăng ký.
 
-        Retry chỉ lỗi MẠNG/SERVER (NetworkError, timeout, 5xx). KHÔNG
-        retry lỗi AUTH (sai mật khẩu, token không hợp lệ) — sẽ raise
-        ngay để user biết phải sửa credentials.
+        Mặc định chỉ retry lỗi MẠNG/SERVER (NetworkError, timeout, 5xx).
+        `retry_invalid=True` retry mọi response/exception không tạo được
+        User hợp lệ có token, tới khi thành công hoặc user hủy.
 
         Backoff: 0.5s → 1.0s → 1.5s → ... cap 3s, + random ±0.2s jitter.
         Giữa các lần thử, có thể bị Ctrl+C huỷ (CancelledError → raise
@@ -392,6 +393,7 @@ class AuthService:
                 nếu thành công, ngược lại là str(exception)[:100].
             should_stop(): trả True để dừng ngay (vd: user bấm Hủy).
             max_duration_min: None/0 = vô hạn; >0 = giới hạn phút.
+            retry_invalid: retry cả lỗi auth/response không hợp lệ.
 
         Returns:
             User đã login thành công.
@@ -428,7 +430,7 @@ class AuthService:
                         pass
                 return user
             except Exception as e:
-                if not AuthService._is_network_error(e):
+                if not retry_invalid and not AuthService._is_network_error(e):
                     # Lỗi auth (sai mật khẩu, etc.) — không retry.
                     if on_progress:
                         try:
